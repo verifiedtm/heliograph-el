@@ -73,6 +73,18 @@ and context plist (window size and palette). the renderer must return a
 (setq heliograph-center-renderer #'my-heliograph-center)
 ```
 
+for a more elaborate astronomical-clock instrument, select the opt-in astrolabe renderer:
+
+```elisp
+(setq heliograph-center-renderer #'heliograph-render-center-astrolabe)
+```
+
+it adds half-degree azimuth graduations, segmented registration arcs,
+concentric altitude circles, and a calculated above-horizon solar path for
+the local calendar day. the bright marker shows the current sun when it is
+above the horizon. it uses the configured observer coordinates and does not
+require geoclue.
+
 refresh with `g`. the layout uses the returned dimensions rather than
 hardcoded solar-dial dimensions. this affects graphical emacs only.
 
