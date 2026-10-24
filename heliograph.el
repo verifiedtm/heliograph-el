@@ -885,7 +885,8 @@ Ignore text mode and windows whose pixel dimensions have not changed."
   ;; Override Evil's bracket prefixes while preserving Doom's leader map.
   (evil-define-key* '(normal motion) heliograph-mode-map
     (kbd "[") #'heliograph-step-backward
-    (kbd "]") #'heliograph-step-forward))
+    (kbd "]") #'heliograph-step-forward
+    (kbd "n") #'heliograph-now))
 
 (defun heliograph--cancel-timer ()
   "Cancel the current buffer's refresh timer."
