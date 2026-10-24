@@ -233,32 +233,33 @@ zenith at the center and the horizon on the outer solid circle."
   :type '(number :tag "Glow opacity")
   :group 'heliograph)
 
-(defun heliograph--gui-text (canvas text x y &optional right color)
-  "Typeset TEXT on CANVAS at X,Y with restrained phosphor edging.
-When RIGHT is non-nil, X is the right edge of the label."
-  (let ((attrs (list :x x :y y :font-family "monospace"
-                     :font-size 13
-                     :text-anchor (if right "end" "start"))))
-    ;; Low-alpha thick stroke is a portable approximation of a subtle glow;
-    ;; no filter pipeline or browser renderer required.
+(defun heliograph--gui-text (text &optional gold)
+  "Create one SVG image for TEXT, gold if GOLD, otherwise white.
+Gold labels are two points larger than the white labels."
+  (let* ((size (if gold 15 13))
+         (color (if gold "#efd194" "#f1f0eb"))
+         (width (ceiling (+ 12 (* (length text) size 0.74))))
+         (canvas (svg-create width 24))
+         (attrs (list :x 5 :y 18 :font-family "monospace"
+                      :font-size size :text-anchor "start")))
     (apply #'svg-text canvas text
-           (append attrs (list :fill "none"
-                               :stroke (or color "#cda769")
+           (append attrs (list :fill "none" :stroke color
                                :stroke-opacity heliograph-svg-glow
-                               :stroke-width 2.4
-                               :stroke-linejoin "round")))
+                               :stroke-width 2.4 :stroke-linejoin "round")))
     (apply #'svg-text canvas text
-           (append attrs (list :fill (or color "#cda769"))))))
+           (append attrs (list :fill color)))
+    (svg-image canvas)))
 
-(defun heliograph--gui-pair (left right &optional header)
-  "Render LEFT and RIGHT as a full-width SVG typography strip.
-HEADER makes the line a brighter institutional heading."
-  (let* ((w (max 1 (window-body-width nil t)))
-         (canvas (svg-create w 24))
-         (color (if header "#efd194" "#bca985")))
-    (heliograph--gui-text canvas left 12 17 nil color)
-    (heliograph--gui-text canvas right (- w 12) 17 t color)
-    (insert-image (svg-image canvas))
+(defun heliograph--gui-pair (left right &optional heading)
+  "Draw separate SVG components for LEFT and RIGHT.
+HEADING renders the institutional left-side label in gold."
+  (let ((left-image (heliograph--gui-text left heading))
+        (right-image (heliograph--gui-text right nil)))
+    (heliograph--gui-align '(12))
+    (insert-image left-image)
+    (heliograph--gui-align
+     `(- right (,(car (image-size right-image t)))))
+    (insert-image right-image)
     (insert "\n")))
 
 (defun heliograph--gui-rule ()
