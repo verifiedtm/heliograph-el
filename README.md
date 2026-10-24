@@ -72,8 +72,11 @@ set latitude and longitude in decimal degrees, with north and east positive.
 | `(setq heliograph-station "YOUR-STATION")` | station name |
 | `heliograph-station-formatter` | function formatting the station name for display |
 | `heliograph-center-renderer` | custom function for the graphical center instrument |
+| `(setq heliograph-refresh-seconds 60)` | seconds between updates; zero disables automatic refresh |
 | `(setq heliograph-latitude 0.0)` | latitude in degrees north |
 | `(setq heliograph-longitude 0.0)` | longitude in degrees east |
+
+Reopen heliograph after changing the refresh interval.
 
 `heliograph-center-renderer` receives a snapshot and context plist (window size
 and palette), and returns a `heliograph-node` containing its image and pixel

@@ -173,7 +173,10 @@ A location fix may arrive later; manual coordinates are used meanwhile."
              (eq heliograph--geoclue-state 'stopped))
     (run-with-idle-timer 0.1 nil #'heliograph-geoclue-start)))
 
-(defcustom heliograph-refresh-seconds 60 "Seconds between visible updates; zero disables." :type 'integer)
+(defcustom heliograph-refresh-seconds 60
+  "Seconds between visible updates; zero disables automatic refresh.
+Reopen the heliograph buffer after changing this option to restart its timer."
+  :type 'natnum :group 'heliograph)
 
 (defface heliograph-gold '((t :foreground "#cda769")) "Solar ornament.")
 (defface heliograph-heading '((t :foreground "#efd194" :weight bold)) "Headings.")
