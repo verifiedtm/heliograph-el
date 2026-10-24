@@ -1,6 +1,6 @@
 # heliograph
 
-a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs uses the same layout with native text and a living astronomical inscription. no browser, external process, or third-party elisp dependency.
+solar emacs startup screen, for svg and text
 
 <table>
   <tr>
