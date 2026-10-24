@@ -34,8 +34,8 @@ cell (LATITUDE . LONGITUDE).  Nil or errors fall back to the configured
 manual coordinates.  Providers are called synchronously; network or
 D-Bus queries should instead maintain a cached fix and return promptly."
   :type '(choice (const :tag "Manual" manual)
-                 (const :tag "GeoClue2" geoclue)
-                 (function :tag "Cached location provider"))
+          (const :tag "GeoClue2" geoclue)
+          (function :tag "Cached location provider"))
   :group 'heliograph)
 
 (defun heliograph--location ()
@@ -298,7 +298,7 @@ zenith at the center and the horizon on the outer solid circle."
       ;; A restrained, typeset astronomical plate.
       (svg-text s "HCA / ARRAY 01" :x 22 :y 29
                 :font-size 13 :font-family "monospace" :fill gold)
-      (svg-text s "ZENITHAL SOLAR PROJECTION" :x 320 :y 54
+      (svg-text s "ZENITHAL SOLAR PROJECTION" :x 32 :y 54
                 :font-size 13 :font-family "monospace"
                 :text-anchor "middle" :fill gold)
       (dolist (mark '(("N" 320 24) ("E" 512 215)
@@ -346,7 +346,7 @@ _CONTEXT is reserved for responsive instruments."
           (- cy (* radius (cos a))))))
 
 (defun heliograph--instrument-segment (svg cx cy radius start end color
-                                          &optional width dash)
+                                           &optional width dash)
   "Draw an engraved circular arc from START to END degrees."
   (let ((a start))
     (while (< a end)
@@ -488,10 +488,10 @@ solar renderer.  Works without GeoClue using the manual location."
     (svg-text svg "HCA / ARRAY 01" :x 16 :y 28
               :font-family "monospace" :font-size 12 :fill gold)
     (svg-text svg "ZENITHAL SOLAR PROJECTION"
-              :x cx :y 17 :text-anchor "middle"
+              :x cx :y 11 :text-anchor "middle"
               :font-family "monospace" :font-size 11 :fill gold)
-    (dolist (mark '(("N" 320 40) ("E" 529 215)
-                    ("S" 320 402) ("W" 111 215)))
+    (dolist (mark '(("N" 320 34) ("E" 529 215)
+                    ("S" 320 408) ("W" 111 215)))
       (svg-text svg (car mark) :x (nth 1 mark) :y (nth 2 mark)
                 :font-family "monospace" :font-size 13
                 :font-weight "bold" :text-anchor "middle" :fill bright))
@@ -501,7 +501,7 @@ solar renderer.  Works without GeoClue using the manual location."
               :font-family "monospace" :font-size 9 :fill dim)
     (when (< alt 0)
       (svg-text svg "SOL BELOW HORIZON"
-                :x cx :y 417 :text-anchor "middle"
+                :x cx :y 419 :text-anchor "middle"
                 :font-family "monospace" :font-size 10 :fill accent))
     (make-heliograph-node :image (svg-image svg :ascent 'center)
                           :width width :height height)))
