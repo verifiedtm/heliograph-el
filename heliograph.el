@@ -338,6 +338,160 @@ _CONTEXT is reserved for responsive instruments."
   (make-heliograph-node :image (heliograph--dial snapshot)
                         :width 640 :height 420))
 
+
+(defun heliograph--instrument-point (cx cy radius azimuth)
+  "Project RADIUS and AZIMUTH onto a north-up instrument at CX, CY."
+  (let ((a (* float-pi (/ azimuth 180.0))))
+    (cons (+ cx (* radius (sin a)))
+          (- cy (* radius (cos a))))))
+
+(defun heliograph--instrument-segment (svg cx cy radius start end color
+                                          &optional width dash)
+  "Draw an engraved circular arc from START to END degrees."
+  (let ((a start))
+    (while (< a end)
+      (let* ((b (min end (+ a 3.0)))
+             (p (heliograph--instrument-point cx cy radius a))
+             (q (heliograph--instrument-point cx cy radius b)))
+        (svg-line svg (car p) (cdr p) (car q) (cdr q)
+                  :stroke color :stroke-width (or width 1)
+                  :stroke-dasharray (or dash "none")))
+      (setq a (+ a 3.0)))))
+
+(defun heliograph--instrument-solar-arc (svg cx cy horizon gold bright)
+  "Draw today's actual above-horizon solar trajectory on SVG.
+Sample the UTC day at ten-minute intervals; stop at the horizon.
+This is a solar-position approximation, not a navigation ephemeris."
+  (let* ((now (decode-time (current-time) 0))
+         (day-start (encode-time 0 0 0
+                                 (decoded-time-day now)
+                                 (decoded-time-month now)
+                                 (decoded-time-year now) 0))
+         (previous nil)
+         (last-alt nil))
+    (dotimes (i 145)
+      (let* ((time (time-add day-start (seconds-to-time (* i 600))))
+             (sun (heliograph--solar-position time))
+             (alt (car sun))
+             (az (cadr sun))
+             (point (when (>= alt 0)
+                      (heliograph--instrument-point
+                       cx cy (* horizon (/ (- 90.0 alt) 90.0)) az))))
+        (when (and previous point)
+          (svg-line svg (car previous) (cdr previous)
+                    (car point) (cdr point)
+                    :stroke gold :stroke-width 1.8))
+        ;; Small hourly observation marks along the illuminated arc.
+        (when (and point (zerop (mod i 6)))
+          (svg-circle svg (car point) (cdr point) 1.8
+                      :fill bright))
+        (when (and point (not previous) last-alt)
+          (svg-circle svg (car point) (cdr point) 3.5
+                      :stroke bright :stroke-width 1 :fill "none"))
+        (when (and previous (not point))
+          (svg-circle svg (car previous) (cdr previous) 3.5
+                      :stroke bright :stroke-width 1 :fill "none"))
+        (setq previous point last-alt alt)))))
+
+(defun heliograph-render-center-astrolabe (snapshot _context)
+  "Render an elaborate calibrated solar instrument for SNAPSHOT.
+Concentric altitude scales, azimuth engraving and the actual daily
+solar path are combined with ornamental registration arcs.  The
+instrument uses the same north-up zenithal projection as the basic
+solar renderer.  Works without GeoClue using the manual location."
+  (let* ((width 640) (height 420)
+         (cx 320.0) (cy 210.0) (horizon 140.0)
+         (gold "#cda769") (bright "#efd194")
+         (dim "#6e664f") (accent "#86b7aa")
+         (svg (svg-create width height))
+         (alt (plist-get snapshot :alt))
+         (az (plist-get snapshot :az))
+         (point (heliograph--instrument-point
+                 cx cy (* horizon (/ (- 90.0 alt) 90.0)) az)))
+    ;; Outer engraved case and four altitude rings.  The central
+    ;; point corresponds to the zenith; the 140px ring is the horizon.
+    (dolist (ring '((140 . 1.3) (93.333 . 0.8)
+                    (46.667 . 0.8) (153 . 0.7) (170 . 1.0)))
+      (svg-circle svg cx cy (car ring)
+                  :fill "none" :stroke (if (= (car ring) 170) dim gold)
+                  :stroke-width (cdr ring)))
+    (heliograph--instrument-segment svg cx cy 160 0 360 dim 0.8 "2,5")
+    (heliograph--instrument-segment svg cx cy 177 0 360 dim 0.7 "1,5")
+    ;; Subtle segmented concentric arcs: visually elaborate, but
+    ;; static like calibration/registration marks.
+    (dolist (radius '(58 108 145 165))
+      (heliograph--instrument-segment svg cx cy radius 18 73 dim 0.9)
+      (heliograph--instrument-segment svg cx cy radius 196 252 dim 0.9))
+    (heliograph--instrument-segment svg cx cy 118 112 178 accent 0.65 "2,4")
+    (heliograph--instrument-segment svg cx cy 118 292 358 accent 0.65 "2,4")
+    ;; Compass grid and angular reference guides.
+    (dotimes (i 12)
+      (let* ((angle (* i 30.0))
+             (p (heliograph--instrument-point cx cy 0 angle))
+             (q (heliograph--instrument-point cx cy 140 angle)))
+        (svg-line svg (car p) (cdr p) (car q) (cdr q)
+                  :stroke dim :stroke-width (if (zerop (mod i 3)) 0.95 0.6)
+                  :stroke-dasharray (if (zerop (mod i 3)) "none" "3,6"))))
+    ;; Major graduations every 30 degrees; half-degree minor ticks.
+    (dotimes (i 720)
+      (let* ((angle (/ i 2.0))
+             (major (zerop (mod i 60)))
+             (medium (zerop (mod i 10)))
+             (inner (cond (major 153) (medium 162) (t 167)))
+             (p (heliograph--instrument-point cx cy inner angle))
+             (q (heliograph--instrument-point cx cy 173 angle)))
+        (svg-line svg (car p) (cdr p) (car q) (cdr q)
+                  :stroke (if major bright gold)
+                  :stroke-width (if major 1.6 (if medium 0.9 0.45)))))
+    ;; Calibrated azimuth labels just beyond the outer graduated ring.
+    (dotimes (i 12)
+      (let* ((angle (* i 30))
+             (p (heliograph--instrument-point cx cy 187 angle)))
+        (svg-text svg (format "%03d°" angle)
+                  :x (car p) :y (+ 3 (cdr p))
+                  :font-size 9 :font-family "monospace"
+                  :text-anchor "middle" :fill gold)))
+    ;; The daily solar arc, computed from position samples.
+    (heliograph--instrument-solar-arc svg cx cy horizon gold bright)
+    ;; Solar position: keep below-horizon readings off the visible dial.
+    (when (>= alt 0.0)
+      (svg-line svg cx cy (car point) (cdr point)
+                :stroke accent :stroke-width 1.2)
+      (svg-circle svg (car point) (cdr point) 12
+                  :stroke gold :stroke-width 0.9
+                  :stroke-opacity 0.6 :fill "none")
+      (svg-circle svg (car point) (cdr point) 6
+                  :stroke bright :stroke-width 1.5 :fill bright))
+    ;; Mechanical pivot, etched center reticle, and four registry dots.
+    (svg-circle svg cx cy 13 :stroke bright :stroke-width 1.3
+                :fill "#201e1a")
+    (svg-circle svg cx cy 8 :stroke gold :stroke-width 0.7 :fill "none")
+    (svg-circle svg cx cy 3 :fill bright)
+    (dolist (angle '(0 90 180 270))
+      (let ((p (heliograph--instrument-point cx cy 140 angle)))
+        (svg-circle svg (car p) (cdr p) 2.2 :fill bright)))
+    ;; Plate inscriptions frame rather than obscure the mechanism.
+    (svg-text svg "HCA / ARRAY 01" :x 16 :y 28
+              :font-family "monospace" :font-size 12 :fill gold)
+    (svg-text svg "ZENITHAL SOLAR PROJECTION"
+              :x cx :y 17 :text-anchor "middle"
+              :font-family "monospace" :font-size 11 :fill gold)
+    (dolist (mark '(("N" 320 40) ("E" 529 215)
+                    ("S" 320 402) ("W" 111 215)))
+      (svg-text svg (car mark) :x (nth 1 mark) :y (nth 2 mark)
+                :font-family "monospace" :font-size 13
+                :font-weight "bold" :text-anchor "middle" :fill bright))
+    (svg-text svg "60°" :x (+ cx 9) :y (- cy 46.667)
+              :font-family "monospace" :font-size 9 :fill dim)
+    (svg-text svg "30°" :x (+ cx 9) :y (- cy 93.333)
+              :font-family "monospace" :font-size 9 :fill dim)
+    (when (< alt 0)
+      (svg-text svg "SOL BELOW HORIZON"
+                :x cx :y 417 :text-anchor "middle"
+                :font-family "monospace" :font-size 10 :fill accent))
+    (make-heliograph-node :image (svg-image svg :ascent 'center)
+                          :width width :height height)))
+
 (defcustom heliograph-center-renderer #'heliograph-render-center-solar
   "Renderer function for the center of the graphical dashboard.
 Called with SNAPSHOT and a context plist.  Must return a
