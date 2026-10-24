@@ -228,57 +228,91 @@ zenith at the center and the horizon on the outer solid circle."
   "Insert a display-space that aligns to POSITION."
   (insert (propertize " " 'display `(space :align-to ,position))))
 
-(defun heliograph--gui-pair (left right)
-  "Align LEFT and RIGHT against the edges of the graphical window."
-  (insert "  " left)
-  (heliograph--gui-align `(- right (,(string-pixel-width right))))
-  (insert right "\n"))
+(defcustom heliograph-svg-glow 0.16
+  "Opacity of the soft lettering underlay (0 to 1)."
+  :type '(number :tag "Glow opacity")
+  :group 'heliograph)
+
+(defun heliograph--gui-text (canvas text x y &optional right color)
+  "Typeset TEXT on CANVAS at X,Y with restrained phosphor edging.
+When RIGHT is non-nil, X is the right edge of the label."
+  (let ((attrs (list :x x :y y :font-family "monospace"
+                     :font-size 13
+                     :text-anchor (if right "end" "start"))))
+    ;; Low-alpha thick stroke is a portable approximation of a subtle glow;
+    ;; no filter pipeline or browser renderer required.
+    (apply #'svg-text canvas text
+           (append attrs (list :fill "none"
+                               :stroke (or color "#cda769")
+                               :stroke-opacity heliograph-svg-glow
+                               :stroke-width 2.4
+                               :stroke-linejoin "round")))
+    (apply #'svg-text canvas text
+           (append attrs (list :fill (or color "#cda769"))))))
+
+(defun heliograph--gui-pair (left right &optional header)
+  "Render LEFT and RIGHT as a full-width SVG typography strip.
+HEADER makes the line a brighter institutional heading."
+  (let* ((w (max 1 (window-body-width nil t)))
+         (canvas (svg-create w 24))
+         (color (if header "#efd194" "#bca985")))
+    (heliograph--gui-text canvas left 12 17 nil color)
+    (heliograph--gui-text canvas right (- w 12) 17 t color)
+    (insert-image (svg-image canvas))
+    (insert "\n")))
 
 (defun heliograph--gui-rule ()
   "Render a full-window-width ornamental rule."
-  (let* ((width (max 1 (window-body-width nil t)))
-         (canvas (svg-create width 3)))
-    (svg-line canvas 0 1 width 1 :stroke "#9d8155" :stroke-width 1)
+  (let* ((w (max 1 (window-body-width nil t)))
+         (canvas (svg-create w 3)))
+    (svg-line canvas 0 1 w 1 :stroke "#9d8155" :stroke-width 1)
     (insert-image (svg-image canvas))
     (insert "\n")))
 
 (defun heliograph--gui-gap (pixels)
-  "Insert approximately PIXELS of vertical space."
-  (insert (make-string (max 0 (/ pixels (max 1 (frame-char-height)))) ?\n)))
+  "Insert an exact PIXELS-high graphical spacer."
+  (when (> pixels 0)
+    (insert-image (svg-image (svg-create 1 pixels)))
+    (insert "\n")))
 
 (defun heliograph--gui-render (snapshot dial)
-  "Draw the graphical SNAPSHOT with center instrument DIAL."
+  "Render a full-window graphical SNAPSHOT with centered instrument DIAL.
+The final telemetry panel is bottom-anchored when the window is tall
+enough; smaller windows scroll naturally instead of overlapping."
   (let* ((height (window-body-height nil t))
          (lh (max 1 (frame-char-height)))
-         (above (max lh (- (/ height 2) 210 (* 4 lh))))
-         (below (max lh (- (/ height 2) 210 (* 11 lh)))))
-    (heliograph--gui-pair
-     (propertize "☼ HELIOGRAPHIC COMPUTING AUTHORITY" 'face 'heliograph-heading)
-     (propertize "SYS / 077" 'face 'heliograph-muted))
+         ;; Header = 2 strips + rule; footer = rule, 4 strips,
+         ;; rule, and one native interactive command line.
+         (top-height (+ 48 3))
+         (footer-height (+ 3 (* 4 24) 3 lh))
+         (free (max 0 (- height top-height 420 footer-height)))
+         (before (/ free 2))
+         (after (- free before)))
+    (heliograph--gui-pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY"
+                          "SYS / 077" t)
     (heliograph--gui-rule)
     (heliograph--gui-pair (format "STATION %s" heliograph-station)
                           (plist-get snapshot :date))
-    (heliograph--gui-gap above)
+    (heliograph--gui-gap before)
     (when (>= (window-body-width nil t) 640)
       (heliograph--gui-align '(- center (320))))
     (insert-image dial)
     (insert "\n")
-    (heliograph--gui-gap below)
+    (heliograph--gui-gap after)
     (heliograph--gui-rule)
+    (heliograph--gui-pair "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
+                          "EPHEMERIS / LIVE" t)
     (heliograph--gui-pair
-     (propertize "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
-                 'face 'heliograph-gold)
-     (propertize "EPHEMERIS / LIVE" 'face 'heliograph-muted))
+     (format "SOLAR ALTITUDE    %+6.2f°" (plist-get snapshot :alt))
+     (format "SOLAR AZIMUTH    %6.2f°" (plist-get snapshot :az)))
     (heliograph--gui-pair
-     (format "SOLAR ALTITUDE   %+6.2f°" (plist-get snapshot :alt))
-     (format "SOLAR AZIMUTH   %6.2f°" (plist-get snapshot :az)))
+     (format "LUNAR ILLUMINATION    %5.1f%%" (plist-get snapshot :illum))
+     (format "LUNAR PHASE    %s" (plist-get snapshot :phase)))
     (heliograph--gui-pair
-     (format "LUNAR ILLUMINATION   %5.1f%%" (plist-get snapshot :illum))
-     (format "LUNAR PHASE   %s" (plist-get snapshot :phase)))
-    (heliograph--gui-pair
-     (format "JULIAN DATE   %.2f" (plist-get snapshot :julian))
-     "ARCHIVE   ONLINE")
+     (format "JULIAN DATE    %.2f" (plist-get snapshot :julian))
+     "ARCHIVE    ONLINE")
     (heliograph--gui-rule)
+    ;; Controls remain real Emacs buttons, not inert SVG lettering.
     (insert "  ")
     (heliograph--button "F" "FILE ARCHIVE" #'find-file)
     (insert " ")
