@@ -40,5 +40,15 @@
   (let ((heliograph-location-provider (lambda () '(51.5 . -0.1))))
     (should (equal (heliograph--location) '(51.5 . -0.1)))))
 
+
+(ert-deftest heliograph-geoclue-manual-fallback ()
+  (let ((heliograph-location-provider 'geoclue)
+        (heliograph--geoclue-fix nil)
+        (heliograph-latitude 12.0)
+        (heliograph-longitude 34.0))
+    (should (equal (heliograph--location) '(12.0 . 34.0)))
+    (setq heliograph--geoclue-fix '(56.0 . 78.0))
+    (should (equal (heliograph--location) '(56.0 . 78.0)))))
+
 (provide 'heliograph-test)
 ;;; heliograph-test.el ends here
