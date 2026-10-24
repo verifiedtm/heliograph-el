@@ -360,13 +360,13 @@ _CONTEXT is reserved for responsive instruments."
 
 (defun heliograph--instrument-solar-arc (svg cx cy horizon gold bright)
   "Draw today's actual above-horizon solar trajectory on SVG.
-Sample the UTC day at ten-minute intervals; stop at the horizon.
+Sample the local civil day at ten-minute intervals; stop at the horizon.
 This is a solar-position approximation, not a navigation ephemeris."
-  (let* ((now (decode-time (current-time) 0))
+  (let* ((now (decode-time (current-time)))
          (day-start (encode-time 0 0 0
                                  (decoded-time-day now)
                                  (decoded-time-month now)
-                                 (decoded-time-year now) 0))
+                                 (decoded-time-year now)))
          (previous nil)
          (last-alt nil))
     (dotimes (i 145)
