@@ -34,6 +34,7 @@ cell (LATITUDE . LONGITUDE).  Nil or errors fall back to the configured
 manual coordinates.  Providers are called synchronously; network or
 D-Bus queries should instead maintain a cached fix and return promptly."
   :type '(choice (const :tag "Manual" manual)
+                 (const :tag "GeoClue2" geoclue)
                  (function :tag "Cached location provider"))
   :group 'heliograph)
 
@@ -44,7 +45,9 @@ D-Bus queries should instead maintain a cached fix and return promptly."
           (if (eq heliograph-location-provider 'manual)
               fallback
             (condition-case nil
-                (funcall heliograph-location-provider)
+                (if (eq heliograph-location-provider 'geoclue)
+                    heliograph--geoclue-fix
+                  (funcall heliograph-location-provider))
               (error nil)))))
     (if (and (consp candidate)
              (numberp (car candidate))
@@ -53,6 +56,119 @@ D-Bus queries should instead maintain a cached fix and return promptly."
              (<= -180 (cdr candidate) 180))
         candidate
       fallback)))
+
+
+(defcustom heliograph-geoclue-desktop-id "emacs"
+  "Desktop ID submitted to GeoClue for authorization (without .desktop).
+This must correspond to an application desktop ID accepted by your
+desktop's GeoClue authorization agent."
+  :type 'string :group 'heliograph)
+
+(defvar heliograph--geoclue-fix nil
+  "Most recent GeoClue location as (LATITUDE . LONGITUDE), or nil.")
+(defvar heliograph--geoclue-client nil)
+(defvar heliograph--geoclue-signal nil)
+(defvar heliograph--geoclue-state 'stopped)
+(defconst heliograph--geoclue-service "org.freedesktop.GeoClue2")
+(defconst heliograph--geoclue-client-interface "org.freedesktop.GeoClue2.Client")
+(defconst heliograph--geoclue-location-interface "org.freedesktop.GeoClue2.Location")
+(defconst heliograph--geoclue-properties "org.freedesktop.DBus.Properties")
+
+(defun heliograph--geoclue-refresh ()
+  "Update visible graphical heliograph buffers after a new location fix."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (and heliograph--resize-enabled
+                 (not (eq heliograph--renderer 'text))
+                 (get-buffer-window buffer t))
+        (with-selected-window (get-buffer-window buffer t)
+          (heliograph--render))))))
+
+(defun heliograph--geoclue-read-location (path)
+  "Read latitude and longitude at GeoClue location PATH asynchronously."
+  (when (and (stringp path) (not (equal path "/")))
+    (dbus-call-method-asynchronously
+     :system heliograph--geoclue-service path
+     heliograph--geoclue-properties "Get"
+     (lambda (latitude)
+       (dbus-call-method-asynchronously
+        :system heliograph--geoclue-service path
+        heliograph--geoclue-properties "Get"
+        (lambda (longitude)
+          (let ((fix (cons latitude longitude)))
+            (when (and (numberp latitude) (numberp longitude)
+                       (<= -90 latitude 90) (<= -180 longitude 180))
+              (setq heliograph--geoclue-fix fix)
+              (heliograph--geoclue-refresh))))
+        heliograph--geoclue-location-interface "Longitude"))
+     heliograph--geoclue-location-interface "Latitude")))
+
+(defun heliograph--geoclue-start-client (path)
+  "Configure and start the GeoClue client at PATH."
+  (setq heliograph--geoclue-client path)
+  (setq heliograph--geoclue-signal
+        (dbus-register-signal
+         :system heliograph--geoclue-service path
+         heliograph--geoclue-client-interface "LocationUpdated"
+         (lambda (_old new)
+           (heliograph--geoclue-read-location new))))
+  ;; Chain asynchronous property writes before starting the client.
+  (dbus-call-method-asynchronously
+   :system heliograph--geoclue-service path
+   heliograph--geoclue-properties "Set"
+   (lambda (&rest _)
+     (dbus-call-method-asynchronously
+      :system heliograph--geoclue-service path
+      heliograph--geoclue-properties "Set"
+      (lambda (&rest _)
+        (dbus-call-method-asynchronously
+         :system heliograph--geoclue-service path
+         heliograph--geoclue-client-interface "Start"
+         (lambda (&rest _)
+           (setq heliograph--geoclue-state 'active))))
+      heliograph--geoclue-client-interface "RequestedAccuracyLevel"
+      :variant :uint32 4))
+   heliograph--geoclue-client-interface "DesktopId"
+   :variant :string heliograph-geoclue-desktop-id))
+
+(defun heliograph-geoclue-start ()
+  "Request GeoClue city-level coordinates asynchronously.
+A location fix may arrive later; manual coordinates are used meanwhile."
+  (interactive)
+  (unless (featurep 'dbus)
+    (unless (require 'dbus nil t)
+      (user-error "Emacs was built without D-Bus support")))
+  (when (eq heliograph--geoclue-state 'stopped)
+    (setq heliograph--geoclue-state 'starting)
+    (condition-case err
+        (dbus-call-method-asynchronously
+         :system heliograph--geoclue-service
+         "/org/freedesktop/GeoClue2/Manager"
+         "org.freedesktop.GeoClue2.Manager" "GetClient"
+         #'heliograph--geoclue-start-client)
+      (error
+       (setq heliograph--geoclue-state 'stopped)
+       (message "Heliograph GeoClue unavailable: %s" (error-message-string err))))))
+
+(defun heliograph-geoclue-stop ()
+  "Stop GeoClue updates and clear the current fix."
+  (interactive)
+  (when heliograph--geoclue-signal
+    (dbus-unregister-object heliograph--geoclue-signal)
+    (setq heliograph--geoclue-signal nil))
+  (when heliograph--geoclue-client
+    (dbus-call-method-asynchronously
+     :system heliograph--geoclue-service heliograph--geoclue-client
+     heliograph--geoclue-client-interface "Stop" nil))
+  (setq heliograph--geoclue-state 'stopped
+        heliograph--geoclue-client nil
+        heliograph--geoclue-fix nil))
+
+(defun heliograph--geoclue-ensure-started ()
+  "Initialize opt-in GeoClue integration without delaying startup."
+  (when (and (eq heliograph-location-provider 'geoclue)
+             (eq heliograph--geoclue-state 'stopped))
+    (run-with-idle-timer 0.1 nil #'heliograph-geoclue-start)))
 
 (defcustom heliograph-refresh-seconds 60 "Seconds between visible updates; zero disables." :type 'integer)
 
@@ -411,6 +527,7 @@ enough; smaller windows scroll naturally instead of overlapping."
 (defun heliograph--render ()
   "Render graphical layout, or preserve the original text presentation."
   (setq-local heliograph--resize-enabled t)
+  (heliograph--geoclue-ensure-started)
   (if (and (not (eq heliograph--renderer 'text))
            (display-graphic-p)
            (image-type-available-p 'svg))
