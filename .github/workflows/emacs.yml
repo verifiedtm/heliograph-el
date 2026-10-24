@@ -1,0 +1,15 @@
+name: emacs tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install emacs
+        run: sudo apt-get update && sudo apt-get install -y emacs-nox
+      - name: byte compile
+        run: emacs -Q --batch -L . -f batch-byte-compile heliograph.el
+      - name: run ERT
+        run: emacs -Q --batch -L . -L test -l heliograph.el -l test/heliograph-test.el -f ert-run-tests-batch-and-exit
