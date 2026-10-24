@@ -863,6 +863,8 @@ Ignore text mode and windows whose pixel dimensions have not changed."
 
 (defvar heliograph-mode-map
   (let ((map (make-sparse-keymap)))
+    ;; `special-mode' otherwise inherits Space as a scrolling command.
+    (define-key map (kbd "SPC") #'ignore)
     (define-key map (kbd "f") #'find-file)
     (define-key map (kbd "p") #'project-switch-project)
     (define-key map (kbd "r") #'recentf-open-files)
@@ -873,6 +875,12 @@ Ignore text mode and windows whose pixel dimensions have not changed."
     (define-key map (kbd "g") #'heliograph-refresh)
     (define-key map (kbd "q") #'quit-window)
     map))
+
+(declare-function evil-set-initial-state "evil-core" (mode state))
+
+;; Optional integration, regardless of which package loads first.
+(with-eval-after-load 'evil
+  (evil-set-initial-state 'heliograph-mode 'emacs))
 
 (defun heliograph--cancel-timer ()
   "Cancel the current buffer's refresh timer."
