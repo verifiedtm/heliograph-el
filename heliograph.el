@@ -393,17 +393,31 @@ This is a solar-position approximation, not a navigation ephemeris."
                       :stroke bright :stroke-width 1 :fill "none"))
         (setq previous point last-alt alt)))))
 
-(defun heliograph-render-center-astrolabe (snapshot _context)
+(defun heliograph-render-center-astrolabe (snapshot context)
   "Render an elaborate calibrated solar instrument for SNAPSHOT.
 Concentric altitude scales, azimuth engraving and the actual daily
 solar path are combined with ornamental registration arcs.  The
 instrument uses the same north-up zenithal projection as the basic
 solar renderer.  Works without GeoClue using the manual location."
-  (let* ((width 640) (height 420)
+  (let* ((window-width (plist-get context :window-width))
+         (window-height (plist-get context :window-height))
+         ;; Preserve the original 640x420 plate in compact windows.
+         ;; On a spacious display, enlarge the entire SVG uniformly.
+         ;; Keep room for the header, telemetry, and native buttons.
+         (available (max 420 (- window-height 240)))
+         (scale (if (and (> window-width 1000)
+                         (> window-height 700))
+                    (min 1.65 (/ available 420.0)
+                         (/ window-width 640.0))
+                  1.0))
+         (width (round (* 640 scale)))
+         (height (round (* 420 scale)))
          (cx 320.0) (cy 210.0) (horizon 140.0)
          (gold "#cda769") (bright "#efd194")
          (dim "#6e664f") (accent "#86b7aa")
-         (svg (svg-create width height))
+         ;; A fixed coordinate system keeps every ring, arc, inscription,
+         ;; and tick proportionate at all window sizes.
+         (svg (svg-create width height :viewBox "0 0 640 420"))
          (alt (plist-get snapshot :alt))
          (az (plist-get snapshot :az))
          (point (heliograph--instrument-point
