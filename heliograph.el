@@ -75,11 +75,10 @@ desktop's GeoClue authorization agent."
 (defconst heliograph--geoclue-properties "org.freedesktop.DBus.Properties")
 
 (defun heliograph--geoclue-refresh ()
-  "Update visible graphical heliograph buffers after a new location fix."
+  "Update visible heliograph buffers after a new location fix."
   (dolist (buffer (buffer-list))
     (with-current-buffer buffer
       (when (and heliograph--resize-enabled
-                 (not (eq heliograph--renderer 'text))
                  (get-buffer-window buffer t))
         (with-selected-window (get-buffer-window buffer t)
           (heliograph--render))))))
@@ -669,56 +668,6 @@ Called with SNAPSHOT and a context plist.  Must return a
                       'action (lambda (_button)
                                 (call-interactively command))))
 
-(defun heliograph--render-text ()
-  "Replace current buffer contents with the observatory display."
-  (unless heliograph--busy
-    (let* ((heliograph--busy t)
-           (inhibit-read-only t)
-           (snapshot (heliograph--snapshot))
-           (dial nil)
-           (width (max 40 (min 74 (1- (window-body-width))))))
-      (erase-buffer)
-      (heliograph--line (make-string width ?═) 'heliograph-gold)
-      (heliograph--line "  ☼ HELIOGRAPHIC COMPUTING AUTHORITY" 'heliograph-heading)
-      (heliograph--line (format "  STATION %-18s %s"
-                                (heliograph--station-label) (plist-get snapshot :date))
-                        'heliograph-muted)
-      (heliograph--line (make-string width ?─) 'heliograph-gold)
-      (if dial
-          (progn (insert "\n") (insert-image dial) (insert "\n\n"))
-        (dolist (line '("                 ╲     │     ╱"
-                        "            ╲     ╲    │    ╱     ╱"
-                        "              ─────── ◉ ───────"
-                        "            ╱     ╱    │    ╲     ╲"
-                        "                 ╱     │     ╲"))
-          (heliograph--line line 'heliograph-gold))
-        (insert "\n"))
-      (heliograph--line "  CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01" 'heliograph-gold)
-      (heliograph--line (heliograph--ephemeris-label snapshot) 'heliograph-muted)
-      (heliograph--line (make-string width ?─) 'heliograph-muted)
-      (heliograph--line (format "  SOLAR ALTITUDE       %+7.2f°   SOLAR AZIMUTH   %7.2f°"
-                                (plist-get snapshot :alt) (plist-get snapshot :az)))
-      (heliograph--line (format "  LUNAR ILLUMINATION   %6.1f%%   PHASE           %s"
-                                (plist-get snapshot :illum) (plist-get snapshot :phase)))
-      (heliograph--line (format "  JULIAN DATE       %10.2f   ARCHIVE         ONLINE"
-                                (plist-get snapshot :julian)))
-      (heliograph--line (make-string width ?─) 'heliograph-muted)
-      (insert "  ")
-      (heliograph--button "F" "FILE ARCHIVE" #'find-file)
-      (heliograph--button "P" "PROJECT REGISTRY" #'project-switch-project)
-      (insert "\n  ")
-      (heliograph--button "R" "RECENT RECORDS" #'recentf-open-files)
-      (heliograph--button "C" "CONFIGURATION" #'customize)
-      (insert "\n\n")
-      (heliograph--line "  ● INSTRUMENTATION READY   /   G REFRESH   /   Q EXIT"
-                        'heliograph-ready)
-      (goto-char (point-min)))))
-
-
-(defun heliograph--gui-align (position)
-  "Insert a display-space that aligns to POSITION."
-  (insert (propertize " " 'display `(space :align-to ,position))))
-
 (defcustom heliograph-svg-glow 0.16
   "Opacity of the soft lettering underlay (0 to 1)."
   :type '(number :tag "Glow opacity")
@@ -744,98 +693,190 @@ RIGHT-ALIGN anchors the lettering to the canvas's right inset."
            (append attrs (list :fill color)))
     (svg-image canvas)))
 
-(defun heliograph--gui-pair (left right &optional heading)
-  "Draw separate SVG components for LEFT and RIGHT.
-HEADING renders the institutional left-side label in gold."
-  (let ((left-image (heliograph--gui-text left heading))
-        (right-image (heliograph--gui-text right nil t)))
-    (heliograph--gui-align '(12))
-    (insert-image left-image)
-    (heliograph--gui-align
-     `(- right (,(car (image-size right-image t)))))
-    (insert-image right-image)
-    (insert "\n")))
+(defun heliograph--svg-available-p ()
+  "Whether this buffer may enhance individual elements with SVG."
+  (and (not (eq heliograph--renderer 'text))
+       (display-graphic-p) (fboundp 'svg-create)
+       (image-type-available-p 'svg)))
 
-(defun heliograph--gui-rule ()
-  "Render a full-window-width ornamental rule."
-  (let* ((w (max 1 (window-body-width nil t)))
-         (canvas (svg-create w 3)))
-    (svg-line canvas 0 1 w 1 :stroke "#9d8155" :stroke-width 1)
-    (insert-image (svg-image canvas))
-    (insert "\n")))
+(defun heliograph--enhance (producer fallback)
+  "Try image PRODUCER for one element, otherwise return FALLBACK.
+A failed element never changes the capabilities of its siblings."
+  (or (and (heliograph--svg-available-p)
+           (condition-case nil
+               (let* ((image (funcall producer))
+                      (size (and image (image-size image t))))
+                 (when (and size (> (car size) 0) (> (cdr size) 0))
+                   (list :image image :width (car size) :height (cdr size))))
+             (error nil)))
+      fallback))
 
-(defun heliograph--gui-gap (pixels)
-  "Insert an exact PIXELS-high graphical spacer."
-  (when (> pixels 0)
-    (insert-image (svg-image (svg-create 1 pixels)))
-    (insert "\n")))
+(defun heliograph--text-element (text &optional face)
+  "Make a native TEXT element with FACE and measured dimensions."
+  (list :text (propertize text 'face (or face 'default))
+        :width (if (display-graphic-p) (string-pixel-width text)
+                 (string-width text))
+        :height (if (display-graphic-p) (frame-char-height) 1)))
 
-(defun heliograph--gui-render (snapshot node)
-  "Render a full-window graphical SNAPSHOT with centered instrument NODE.
-The final telemetry panel is bottom-anchored when the window is tall
-enough; smaller windows scroll naturally instead of overlapping."
-  (let* ((height (window-body-height nil t))
-         (center-width (heliograph-node-width node))
-         (center-height (heliograph-node-height node))
-         (center-image (heliograph-node-image node))
-         (lh (max 1 (frame-char-height)))
-         ;; Header = 2 strips + rule; footer = rule, 4 strips,
-         ;; rule, and one native interactive command line.
-         (top-height (+ 48 3))
-         (footer-height (+ 3 (* 4 24) 3 lh))
-         (free (max 0 (- height top-height center-height footer-height)))
-         (before (/ free 2))
-         (after (- free before)))
-    (heliograph--gui-pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY"
-                          "SYS / 077" t)
-    (heliograph--gui-rule)
-    (heliograph--gui-pair (format "STATION %s" (heliograph--station-label))
-                          (plist-get snapshot :date))
-    (heliograph--gui-gap before)
-    (when (>= (window-body-width nil t) center-width)
-      (heliograph--gui-align
-       `(- center (,(floor center-width 2)))))
-    (insert-image center-image)
-    (insert "\n")
-    (heliograph--gui-gap after)
-    (heliograph--gui-rule)
-    (heliograph--gui-pair "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
-                          (heliograph--ephemeris-label snapshot) t)
-    (heliograph--gui-pair
-     (format "SOLAR ALTITUDE    %+6.2f°" (plist-get snapshot :alt))
-     (format "SOLAR AZIMUTH    %6.2f°" (plist-get snapshot :az)))
-    (heliograph--gui-pair
-     (format "LUNAR ILLUMINATION    %5.1f%%" (plist-get snapshot :illum))
-     (format "LUNAR PHASE    %s" (plist-get snapshot :phase)))
-    (heliograph--gui-pair
-     (format "JULIAN DATE    %.2f" (plist-get snapshot :julian))
-     "ARCHIVE    ONLINE")
-    (heliograph--gui-rule)
-    ;; Controls remain real Emacs buttons, not inert SVG lettering.
-    (insert "  ")
-    (heliograph--button "F" "FILE ARCHIVE" #'find-file)
-    (insert " ")
-    (heliograph--button "P" "PROJECT REGISTRY" #'project-switch-project)
-    (insert " ")
-    (heliograph--button "R" "RECENT RECORDS" #'recentf-open-files)
-    (heliograph--gui-align `(- right (,(string-pixel-width "● READY"))))
-    (insert (propertize "● READY" 'face 'heliograph-ready) "\n")))
+(defun heliograph--label (text &optional heading right)
+  "Make a TEXT label, optionally HEADING or RIGHT aligned."
+  (let ((element
+         (heliograph--enhance
+          (lambda () (heliograph--gui-text text heading right))
+          (heliograph--text-element text (if heading 'heliograph-heading 'default)))))
+    (plist-put element :text
+               (propertize text 'face (if heading 'heliograph-heading 'default)))))
+
+(defun heliograph--insert-element (element)
+  "Insert ELEMENT, retaining its text as the image's underlying content."
+  (let ((text (or (plist-get element :text) " ")))
+    (insert (if (plist-get element :image)
+                (propertize text 'display (plist-get element :image))
+              text))))
+
+(defun heliograph--align (position)
+  "Advance to absolute POSITION in pixels or terminal columns."
+  (if (display-graphic-p)
+      (insert (propertize " " 'display `(space :align-to (,position))))
+    (insert (make-string (max 0 (- position (current-column))) ?\s))))
+
+(defun heliograph--row-height (elements)
+  "Return the line height required by ELEMENTS."
+  (apply #'max (if (display-graphic-p) (frame-char-height) 1)
+         (mapcar (lambda (element) (plist-get element :height)) elements)))
+
+(defun heliograph--fit-label (element width)
+  "Wrap an oversized label ELEMENT into rows fitting WIDTH."
+  (if (<= (plist-get element :width) width)
+      (list (list element))
+    (let* ((text (plist-get element :text))
+           (face (get-text-property 0 'face text))
+           (columns (max 1 (if (display-graphic-p)
+                               (/ width (max 1 (frame-char-width))) width))))
+      (with-temp-buffer
+        (insert text)
+        (let ((fill-column columns)) (fill-region (point-min) (point-max)))
+        (mapcar (lambda (line) (list (heliograph--text-element line face)))
+                (split-string (buffer-string) "\n"))))))
+
+(defun heliograph--pair-rows (left right width)
+  "Lay out LEFT and RIGHT within WIDTH, stacking when necessary."
+  (if (> (+ (plist-get left :width) (plist-get right :width)
+            (if (display-graphic-p) (frame-char-width) 1)) width)
+      (append (heliograph--fit-label left width)
+              (heliograph--fit-label right width))
+    (list (list left right))))
+
+(defun heliograph--insert-row (elements width)
+  "Insert a measured row of ELEMENTS within WIDTH."
+  (heliograph--insert-element (car elements))
+  (when (cdr elements)
+    (heliograph--align (- width (plist-get (cadr elements) :width)))
+    (heliograph--insert-element (cadr elements)))
+  (insert "\n"))
+
+(defun heliograph--rule (width)
+  "Make an ornamental rule spanning WIDTH."
+  (heliograph--enhance
+   (lambda ()
+     (let ((svg (svg-create width 3)))
+       (svg-line svg 0 1 width 1 :stroke "#9d8155" :stroke-width 1)
+       (svg-image svg)))
+   (heliograph--text-element
+    (make-string (max 1 (if (display-graphic-p)
+                           (/ width (max 1 (frame-char-width))) width)) ?─)
+    'heliograph-muted)))
+
+(defun heliograph--gap (size)
+  "Insert SIZE vertical units without requiring image support."
+  (when (> size 0)
+    (if (display-graphic-p)
+        (insert (propertize " " 'display `(space :height (,size))) "\n")
+      (insert (make-string size ?\n)))))
+
+(defun heliograph--composition (snapshot width)
+  "Build shared header and footer rows for SNAPSHOT within WIDTH."
+  (let ((pair (lambda (left right &optional heading)
+                (heliograph--pair-rows
+                 (heliograph--label left heading)
+                 (heliograph--label right nil t) width)))
+        (rule (list (heliograph--rule width))))
+    (cons
+     (append (funcall pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY" "SYS / 077" t)
+             (list rule)
+             (funcall pair (format "STATION %s" (heliograph--station-label))
+                      (plist-get snapshot :date)))
+     (append
+      (list rule)
+      (funcall pair "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
+               (heliograph--ephemeris-label snapshot) t)
+      (funcall pair (format "SOLAR ALTITUDE    %+6.2f°" (plist-get snapshot :alt))
+               (format "SOLAR AZIMUTH    %6.2f°" (plist-get snapshot :az)))
+      (funcall pair (format "LUNAR ILLUMINATION    %5.1f%%" (plist-get snapshot :illum))
+               (format "LUNAR PHASE    %s" (plist-get snapshot :phase)))
+      (funcall pair (format "JULIAN DATE    %.2f" (plist-get snapshot :julian))
+               "ARCHIVE    ONLINE")
+      (list rule)))))
+
+(defun heliograph--control-rows (width)
+  "Build native interactive controls, wrapping within WIDTH."
+  (let ((rows nil) (row nil) (used 0))
+    (dolist (control '(("F" "FILE ARCHIVE" find-file)
+                       ("P" "PROJECT REGISTRY" project-switch-project)
+                       ("R" "RECENT RECORDS" recentf-open-files)
+                       ("C" "CONFIGURATION" customize)))
+      (let* ((text (format "[%s] %s" (car control) (cadr control)))
+             (command (nth 2 control))
+             (element (heliograph--text-element text 'heliograph-gold))
+             (size (plist-get element :width)))
+        (plist-put element :text
+                   (propertize text 'button t 'category 'default-button
+                               'face 'heliograph-gold 'follow-link t
+                               'action (lambda (_) (call-interactively command))))
+        (when (and row (> (+ used size 2) width))
+          (push (nreverse row) rows)
+          (setq row nil used 0))
+        ;; Each control occupies its own measured element in a native line.
+        (when row
+          (push (heliograph--text-element "  ") row)
+          (setq used (+ used (if (display-graphic-p) (* 2 (frame-char-width)) 2))))
+        (push element row)
+        (setq used (+ used size))))
+    (when row (push (nreverse row) rows))
+    (nreverse rows)))
 
 (defun heliograph--render ()
-  "Render graphical layout, or preserve the original text presentation."
+  "Compose the dashboard, enhancing each element when SVG is available."
   (setq-local heliograph--resize-enabled t)
   (heliograph--geoclue-ensure-started)
-  (if (and (not (eq heliograph--renderer 'text))
-           (display-graphic-p)
-           (image-type-available-p 'svg))
-      (unless heliograph--busy
-        (let ((heliograph--busy t)
-              (inhibit-read-only t)
-              (snapshot (heliograph--snapshot)))
-          (erase-buffer)
-          (heliograph--gui-render snapshot (heliograph--center-node snapshot))
-          (goto-char (point-min))))
-    (heliograph--render-text)))
+  (unless heliograph--busy
+    (let* ((heliograph--busy t) (inhibit-read-only t)
+           (snapshot (heliograph--snapshot))
+           (width (max 1 (window-body-width nil (display-graphic-p))))
+           (height (window-body-height nil (display-graphic-p)))
+           (composition (heliograph--composition snapshot width))
+           (controls (heliograph--control-rows width))
+           (status (list (heliograph--text-element "● READY" 'heliograph-ready)))
+           (center (heliograph--enhance
+                    (lambda () (heliograph-node-image (heliograph--center-node snapshot)))
+                    (heliograph--text-element "[ SOLAR INSTRUMENT ]" 'heliograph-gold)))
+           (rows (append (car composition) (cdr composition) controls (list status)))
+           (free (max 0 (- height (plist-get center :height)
+                           (apply #'+ (mapcar #'heliograph--row-height rows)))))
+           (before (/ free 2)))
+      (erase-buffer)
+      (dolist (row (car composition)) (heliograph--insert-row row width))
+      (heliograph--gap before)
+      (heliograph--align (max 0 (/ (- width (plist-get center :width)) 2)))
+      (heliograph--insert-element center)
+      (insert "\n")
+      (heliograph--gap (- free before))
+      (dolist (row (cdr composition)) (heliograph--insert-row row width))
+      (dolist (row controls)
+        (mapc #'heliograph--insert-element row)
+        (insert "\n"))
+      (heliograph--insert-row status width)
+      (goto-char (point-min)))))
 
 (defvar-local heliograph--resize-enabled nil
   "Non-nil when this buffer should reflow on window resize.")
@@ -845,16 +886,12 @@ enough; smaller windows scroll naturally instead of overlapping."
   (cons (window-body-width nil t) (window-body-height nil t)))
 
 (defun heliograph--on-window-resize (frame)
-  "Reflow visible graphical heliograph windows on FRAME resize.
-Ignore text mode and windows whose pixel dimensions have not changed."
+  "Reflow visible heliograph windows on FRAME resize."
   (dolist (window (window-list frame 'no-minibuf))
     (when (window-live-p window)
       (let ((buffer (window-buffer window)))
         (with-current-buffer buffer
-          (when (and heliograph--resize-enabled
-                     (not (eq heliograph--renderer 'text))
-                     (display-graphic-p frame)
-                     (image-type-available-p 'svg))
+          (when heliograph--resize-enabled
             (let ((size (cons (window-body-width window t)
                               (window-body-height window t))))
               (unless (equal size (window-parameter window 'heliograph--size))
@@ -863,7 +900,7 @@ Ignore text mode and windows whose pixel dimensions have not changed."
                   (heliograph--render))))))))))
 
 ;; Registered once per Emacs session.  The callback does nothing unless a
-;; graphical heliograph buffer is displayed in the resized frame.
+;; heliograph buffer is displayed in the resized frame.
 (add-hook 'window-size-change-functions #'heliograph--on-window-resize)
 
 (defcustom heliograph-time-step-seconds 600

@@ -1,6 +1,6 @@
 # heliograph
 
-a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs draws a unicode solar diagram. no browser, external process, or third-party elisp dependency.
+a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs uses the same layout with native text and an instrument placeholder. no browser, external process, or third-party elisp dependency.
 
 ## quick start
 
@@ -14,7 +14,11 @@ put `heliograph.el` somewhere on your emacs load path, then:
       heliograph-longitude -74.006)
 ```
 
-evaluate `M-x heliograph` to open the standalone console.\n\nselect a renderer explicitly with `M-x heliograph-svg` or `M-x heliograph-text`. the text command works even in a graphical frame, while svg requires svg support. each opens its own buffer; refreshes keep its selected renderer.
+evaluate `M-x heliograph` to open the standalone console.
+
+select a renderer explicitly with `M-x heliograph-svg` or `M-x heliograph-text`. the text command works even in a graphical frame, while the svg command requires svg support. each opens its own buffer; refreshes keep its selected renderer.
+
+All presentations share the same content and layout: a top header, centered instrument, and bottom telemetry and controls. Paired labels anchor to the left and right edges, stacking when space is tight. SVG enhances individual labels, rules, and the instrument; unavailable or failed elements fall back independently to native text. Window resizing redraws both modes; only the SVG center instrument scales, while the text placeholder keeps its fixed size. When the content exceeds the window height, it scrolls.
 
 ## doom dashboard integration
 
