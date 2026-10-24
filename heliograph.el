@@ -179,14 +179,13 @@ zenith at the center and the horizon on the outer solid circle."
                       'action (lambda (_button)
                                 (call-interactively command))))
 
-(defun heliograph--render ()
+(defun heliograph--render-text ()
   "Replace current buffer contents with the observatory display."
   (unless heliograph--busy
     (let* ((heliograph--busy t)
            (inhibit-read-only t)
            (snapshot (heliograph--snapshot))
-           (dial (unless (eq heliograph--renderer 'text)
-                   (heliograph--dial snapshot)))
+           (dial nil)
            (width (max 40 (min 74 (1- (window-body-width))))))
       (erase-buffer)
       (heliograph--line (make-string width ?═) 'heliograph-gold)
@@ -223,6 +222,85 @@ zenith at the center and the horizon on the outer solid circle."
       (heliograph--line "  ● INSTRUMENTATION READY   /   G REFRESH   /   Q EXIT"
                         'heliograph-ready)
       (goto-char (point-min)))))
+
+
+(defun heliograph--gui-align (position)
+  "Insert a display-space that aligns to POSITION."
+  (insert (propertize " " 'display `(space :align-to ,position))))
+
+(defun heliograph--gui-pair (left right)
+  "Align LEFT and RIGHT against the edges of the graphical window."
+  (insert "  " left)
+  (heliograph--gui-align `(- right (,(string-pixel-width right))))
+  (insert right "\n"))
+
+(defun heliograph--gui-rule ()
+  "Render a full-window-width ornamental rule."
+  (let* ((width (max 1 (window-body-width nil t)))
+         (canvas (svg-create width 3)))
+    (svg-line canvas 0 1 width 1 :stroke "#9d8155" :stroke-width 1)
+    (insert-image (svg-image canvas))
+    (insert "\n")))
+
+(defun heliograph--gui-gap (pixels)
+  "Insert approximately PIXELS of vertical space."
+  (insert (make-string (max 0 (/ pixels (max 1 (frame-char-height)))) ?\n)))
+
+(defun heliograph--gui-render (snapshot dial)
+  "Draw the graphical SNAPSHOT with center instrument DIAL."
+  (let* ((height (window-body-height nil t))
+         (lh (max 1 (frame-char-height)))
+         (above (max lh (- (/ height 2) 210 (* 4 lh))))
+         (below (max lh (- (/ height 2) 210 (* 11 lh)))))
+    (heliograph--gui-pair
+     (propertize "☼ HELIOGRAPHIC COMPUTING AUTHORITY" 'face 'heliograph-heading)
+     (propertize "SYS / 077" 'face 'heliograph-muted))
+    (heliograph--gui-rule)
+    (heliograph--gui-pair (format "STATION %s" heliograph-station)
+                          (plist-get snapshot :date))
+    (heliograph--gui-gap above)
+    (when (>= (window-body-width nil t) 640)
+      (heliograph--gui-align '(- center (320))))
+    (insert-image dial)
+    (insert "\n")
+    (heliograph--gui-gap below)
+    (heliograph--gui-rule)
+    (heliograph--gui-pair
+     (propertize "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
+                 'face 'heliograph-gold)
+     (propertize "EPHEMERIS / LIVE" 'face 'heliograph-muted))
+    (heliograph--gui-pair
+     (format "SOLAR ALTITUDE   %+6.2f°" (plist-get snapshot :alt))
+     (format "SOLAR AZIMUTH   %6.2f°" (plist-get snapshot :az)))
+    (heliograph--gui-pair
+     (format "LUNAR ILLUMINATION   %5.1f%%" (plist-get snapshot :illum))
+     (format "LUNAR PHASE   %s" (plist-get snapshot :phase)))
+    (heliograph--gui-pair
+     (format "JULIAN DATE   %.2f" (plist-get snapshot :julian))
+     "ARCHIVE   ONLINE")
+    (heliograph--gui-rule)
+    (insert "  ")
+    (heliograph--button "F" "FILE ARCHIVE" #'find-file)
+    (insert " ")
+    (heliograph--button "P" "PROJECT REGISTRY" #'project-switch-project)
+    (insert " ")
+    (heliograph--button "R" "RECENT RECORDS" #'recentf-open-files)
+    (heliograph--gui-align `(- right (,(string-pixel-width "● READY"))))
+    (insert (propertize "● READY" 'face 'heliograph-ready) "\n")))
+
+(defun heliograph--render ()
+  "Render graphical layout, or preserve the original text presentation."
+  (if (and (not (eq heliograph--renderer 'text))
+           (display-graphic-p)
+           (image-type-available-p 'svg))
+      (unless heliograph--busy
+        (let ((heliograph--busy t)
+              (inhibit-read-only t)
+              (snapshot (heliograph--snapshot)))
+          (erase-buffer)
+          (heliograph--gui-render snapshot (heliograph--dial snapshot))
+          (goto-char (point-min))))
+    (heliograph--render-text)))
 
 (defvar heliograph-mode-map
   (let ((map (make-sparse-keymap)))
