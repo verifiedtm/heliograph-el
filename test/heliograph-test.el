@@ -250,8 +250,8 @@
         (heliograph--render)
         (should (member 710 alignments))
         (should (member 35 alignments))
-        ;; The full inscription occupies seven native text lines.
-        (should (= (apply #'+ gaps) (- 600 (* 18 20))))))))
+        ;; The full inscription occupies five native text lines.
+        (should (= (apply #'+ gaps) (- 600 (* 16 20))))))))
 
 (ert-deftest heliograph-elements-fall-back-independently ()
   (let ((calls 0))

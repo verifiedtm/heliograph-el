@@ -14,8 +14,8 @@
   :type 'string :group 'heliograph)
 
 (defcustom heliograph-station (system-name) "Station callsign." :type 'string)
-(defcustom heliograph-latitude 40.7128 "Observer latitude in degrees north." :type 'number)
-(defcustom heliograph-longitude -74.006 "Observer longitude in degrees east." :type 'number)
+(defcustom heliograph-latitude 29.9792 "Observer latitude in degrees north." :type 'number)
+(defcustom heliograph-longitude 31.1342 "Observer longitude in degrees east." :type 'number)
 (defun heliograph-default-station-formatter (station)
   "Return STATION in uppercase for display."
   (upcase station))
@@ -562,7 +562,7 @@ Equal elapsed intervals between actual midnights also cover DST days."
          (clock (format-time-string "%H:%M" (plist-get snapshot :time)))
          (clock-column (max 0 (min (- columns 5) (- column 2)))))
     (if compact
-        (append (when full (list "H E L I O G R A P H" ""))
+        (append
                 (list line (concat (make-string column ?\s)
                                    (if (char-displayable-p ?│) "│" "|"))
                       (concat (make-string clock-column ?\s) clock)
