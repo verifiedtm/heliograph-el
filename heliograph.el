@@ -877,10 +877,15 @@ Ignore text mode and windows whose pixel dimensions have not changed."
     map))
 
 (declare-function evil-set-initial-state "evil-core" (mode state))
+(declare-function evil-define-key* "evil-core" (state keymap key def &rest bindings))
 
 ;; Optional integration, regardless of which package loads first.
 (with-eval-after-load 'evil
-  (evil-set-initial-state 'heliograph-mode 'emacs))
+  (evil-set-initial-state 'heliograph-mode 'normal)
+  ;; Override Evil's bracket prefixes while preserving Doom's leader map.
+  (evil-define-key* '(normal motion) heliograph-mode-map
+    (kbd "[") #'heliograph-step-backward
+    (kbd "]") #'heliograph-step-forward))
 
 (defun heliograph--cancel-timer ()
   "Cancel the current buffer's refresh timer."
