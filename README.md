@@ -1,6 +1,6 @@
 # heliograph
 
-a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs uses the same layout with native text and an instrument placeholder. no browser, external process, or third-party elisp dependency.
+a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs uses the same layout with native text and a living astronomical inscription. no browser, external process, or third-party elisp dependency.
 
 ## quick start
 
@@ -19,7 +19,7 @@ evaluate `M-x heliograph` to open the standalone console.
 
 select a renderer explicitly with `M-x heliograph-svg` or `M-x heliograph-text`. the text command works even in a graphical frame, while the svg command requires svg support. each opens its own buffer; refreshes keep its selected renderer.
 
-All presentations share the same content and layout: a top header, centered instrument, and bottom telemetry and controls. Paired labels anchor to the left and right edges, stacking when space is tight. SVG enhances individual labels, rules, and the instrument; unavailable or failed elements fall back independently to native text. Window resizing redraws both modes; only the SVG center instrument scales, while the text placeholder keeps its fixed size. When the content exceeds the window height, it scrolls.
+All presentations share the same content and layout: a top header, centered instrument, and bottom telemetry and controls. Paired labels anchor to the left and right edges, stacking when space is tight. SVG enhances individual labels, rules, and the instrument; unavailable or failed elements fall back independently to native text. Window resizing redraws both modes; the SVG instrument scales and the text inscription adapts its resolution and annotations to available space. When the content exceeds the window height, it scrolls.
 
 ## doom emacs
 
@@ -222,3 +222,25 @@ journal and authorization policy first.
 
 The D-Bus integration has not yet been tested against a live GeoClue
 daemon in CI; the unit tests run without a location service.
+
+## astronomical inscription
+
+The text instrument writes one local civil day from midnight to midnight: `.`
+means night, `:` means civil twilight, and `*` means daylight. A single `☉`
+(above the horizon) or `◌` (below) replaces the cell at the observation time.
+Its position represents time; altitude and azimuth appear in annotations.
+Fonts without single-column solar symbols use `@` and `o`.
+
+Cells sample equal elapsed intervals between local midnight boundaries, so
+23- and 25-hour DST days retain continuous motion. Sunrise and sunset use
+the shared approximate solar model at -0.833 degrees; civil twilight uses
+-6 degrees. Event crossings are refined to one second, which is numerical
+resolution rather than a claim of astronomical accuracy. Polar days and
+nights retain their actual illumination without fabricated events. The
+annotation names the next event within the selected day, or reports that
+there are no further events that day.
+
+Wide, tall views include the title, time pointer, solar motion, next event,
+and coordinates. Smaller views reduce annotation and sampling resolution,
+then collapse to a short inscription and status. Use `[` and `]` to move
+the observation time, and `n` to resume live observations.

@@ -199,9 +199,11 @@
           (search-forward "SYS / 077")
           (should (= (current-column) (car geometry))))
         (goto-char (point-min))
-        (search-forward "[ SOLAR INSTRUMENT ]")
-        (should (= (current-column)
-                   (+ (/ (- (car geometry) 20) 2) 20)))
+        (re-search-forward "^[ ]*[.*:☉◌@o][ .*:☉◌@o]+$")
+        (let* ((line (string-trim-left (match-string 0)))
+               (size (string-width line)))
+          (should (= (current-column)
+                     (+ (/ (- (car geometry) size) 2) size))))
         (goto-char (point-max))
         (forward-line -1)
         (should (looking-at "● READY"))
@@ -247,9 +249,9 @@
                 ((symbol-function 'heliograph--gap) (lambda (size) (push size gaps))))
         (heliograph--render)
         (should (member 710 alignments))
-        (should (member 300 alignments))
-        ;; 3 header rows, instrument, 6 telemetry rows, controls, status.
-        (should (= (apply #'+ gaps) (- 600 (* 12 20))))))))
+        (should (member 35 alignments))
+        ;; The full inscription occupies seven native text lines.
+        (should (= (apply #'+ gaps) (- 600 (* 18 20))))))))
 
 (ert-deftest heliograph-elements-fall-back-independently ()
   (let ((calls 0))
@@ -300,6 +302,76 @@
       (should (equal (dom-attr (car circles) 'fill) "none")))
     (should (equal (dom-attr (car (dom-by-tag svg 'line)) 'stroke-dasharray)
                    "3,5"))))
+
+(defun heliograph-test--snapshot (time latitude longitude)
+  "Build an observation at TIME, LATITUDE and LONGITUDE."
+  (let ((heliograph--observation-time time)
+        (heliograph-location-provider 'manual)
+        (heliograph-latitude latitude) (heliograph-longitude longitude))
+    (heliograph--snapshot)))
+
+(ert-deftest heliograph-inscription-stable-geometry-and-season ()
+  (let* ((summer (heliograph-test--snapshot (encode-time 0 0 12 21 6 2026 0) 40 -74))
+         (winter (heliograph-test--snapshot (encode-time 0 0 12 21 12 2026 0) 40 -74))
+         (a (car (heliograph--inscription summer 96)))
+         (b (car (heliograph--inscription winter 96))))
+    (should (= (string-width a) 96))
+    (should (> (cl-count ?* a) (cl-count ?* b)))
+    (let* ((later (heliograph-test--snapshot
+                   (time-add (plist-get summer :time) 7200) 40 -74))
+           (x (heliograph--inscription summer 96))
+           (y (heliograph--inscription later 96)))
+      (should (< (cadr x) (cadr y)))
+      ;; Every cell other than the two marker positions stays identical.
+      (dotimes (i 96)
+        (unless (memq i (list (cadr x) (cadr y)))
+          (should (= (aref (car x) i) (aref (car y) i))))))))
+
+(ert-deftest heliograph-inscription-events-and-polar-conditions ()
+  (let* ((snapshot (heliograph-test--snapshot
+                    (encode-time 0 0 12 21 3 2026 0) 40 -74))
+         (events (heliograph--solar-events snapshot)))
+    (should (equal (mapcar #'cdr events) '(dawn sunrise sunset dusk)))
+    (dolist (event events)
+      (should (< (abs (- (car (heliograph--solar-at (car event) 40 -74))
+                         (if (memq (cdr event) '(sunrise sunset)) -0.833 -6)))
+                 0.01))))
+  (dolist (season '((6 . ?*) (12 . ?.)))
+    (let* ((snapshot (heliograph-test--snapshot
+                      (encode-time 0 0 12 21 (car season) 2026 0) 89 0))
+           (line (heliograph--inscription snapshot 48)))
+      (should-not (heliograph--solar-events snapshot))
+      (should (= (cl-count (cdr season) (car line)) 47)))))
+
+(ert-deftest heliograph-inscription-dst-and-midnight ()
+  (let ((old (getenv "TZ")))
+    (unwind-protect
+        (progn
+          (setenv "TZ" "America/New_York")
+          (dolist (date '((8 3 2026 23) (1 11 2026 25)))
+            (let* ((start (encode-time 0 0 0 (nth 0 date) (nth 1 date) (nth 2 date)))
+                   (bounds (heliograph--civil-day start))
+                   (seconds (float-time (time-subtract (cadr bounds) (car bounds)))))
+              (should (= seconds (* (nth 3 date) 3600)))
+              (dolist (fraction '(0 0.25 0.5 0.75 0.9999))
+                (let* ((snapshot (heliograph-test--snapshot
+                                  (time-add start (* seconds fraction)) 40 -74))
+                       (result (heliograph--inscription snapshot 40)))
+                  (should (= (cadr result) (min 39 (floor (* 40 fraction))))))))))
+      (setenv "TZ" old))))
+
+(ert-deftest heliograph-inscription-fallback-and-small-viewports ()
+  (let ((snapshot (heliograph-test--snapshot
+                   (encode-time 0 0 12 21 6 2026 0) 40 -74)))
+    (cl-letf (((symbol-function 'char-displayable-p) (lambda (_) nil)))
+      (should (equal (heliograph--solar-marker t) "@"))
+      (should (equal (heliograph--solar-marker nil) "o")))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+      (dolist (width '(1 8 19 20 40 48 80))
+        (dolist (height '(1 2 4 7 10))
+          (let ((lines (heliograph--text-center snapshot width height)))
+            (should (<= (length lines) height))
+            (dolist (line lines) (should (<= (string-width line) width)))))))))
 
 (provide 'heliograph-test)
 ;;; heliograph-test.el ends here

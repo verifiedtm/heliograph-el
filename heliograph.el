@@ -448,6 +448,139 @@ use civil dates rather than assuming every day lasts 24 hours."
      'heliograph--daily-cache key
      (lambda () (heliograph--daily-solar-samples time latitude longitude 600)))))
 
+(defvar heliograph--events-cache nil "Bounded cache of civil-day solar events.")
+
+(defun heliograph--civil-day (time)
+  "Return local midnight boundaries enclosing TIME."
+  (let ((date (decode-time time)))
+    (list (encode-time 0 0 0 (decoded-time-day date)
+                       (decoded-time-month date) (decoded-time-year date))
+          (encode-time 0 0 0 (1+ (decoded-time-day date))
+                       (decoded-time-month date) (decoded-time-year date)))))
+
+(defun heliograph--solar-events (snapshot)
+  "Return model-derived illumination events for SNAPSHOT's civil day.
+Use -0.833 degrees for the apparent upper limb and -6 for civil twilight.
+Refine crossings to within one second; absent crossings stay absent."
+  (let* ((bounds (heliograph--civil-day (plist-get snapshot :time)))
+         (start (float-time (car bounds))) (end (float-time (cadr bounds)))
+         (lat (plist-get snapshot :latitude))
+         (lon (plist-get snapshot :longitude)))
+    (heliograph--cache-value
+     'heliograph--events-cache (list start end lat lon)
+     (lambda ()
+       (let ((left start)
+             (alt (car (heliograph--solar-at start lat lon))) events)
+         (while (< left end)
+           (let* ((right (min end (+ left 300)))
+                  (next (car (heliograph--solar-at right lat lon))))
+             (dolist (threshold '(-6.0 -0.833))
+               (when (not (eq (>= alt threshold) (>= next threshold)))
+                 (let ((lo left) (hi right) (rising (> next alt)))
+                   (while (> (- hi lo) 1)
+                     (let ((mid (/ (+ lo hi) 2.0)))
+                       (if (eq (>= (car (heliograph--solar-at mid lat lon))
+                                   threshold) (>= alt threshold))
+                           (setq lo mid) (setq hi mid))))
+                   (push (cons hi (if (= threshold -6.0)
+                                      (if rising 'dawn 'dusk)
+                                    (if rising 'sunrise 'sunset))) events))))
+             (setq left right alt next)))
+         (sort events (lambda (a b) (< (car a) (car b)))))))))
+
+(defun heliograph--illumination (altitude)
+  "Return the illumination character at model ALTITUDE."
+  (cond ((>= altitude -0.833) ?*) ((>= altitude -6) ?:) (t ?.)))
+
+(defun heliograph--solar-marker (above)
+  "Return a displayable single-column marker for ABOVE horizon status."
+  (let ((char (if above ?☉ ?◌)))
+    (char-to-string
+     (if (and (char-displayable-p char) (= (char-width char) 1))
+         char (if above ?@ ?o)))))
+
+(defun heliograph--inscription (snapshot cells &optional spaced)
+  "Return (LINE COLUMN) for SNAPSHOT using CELLS, optionally SPACED.
+Sample interval midpoints; the marker replaces exactly one cell.
+Equal elapsed intervals between actual midnights also cover DST days."
+  (let* ((bounds (heliograph--civil-day (plist-get snapshot :time)))
+         (start (float-time (car bounds)))
+         (duration (- (float-time (cadr bounds)) start))
+         (cells (max 1 cells))
+         (index (max 0 (min (1- cells)
+                           (floor (* cells (/ (- (float-time (plist-get snapshot :time))
+                                                 start) duration))))))
+         (events (heliograph--solar-events snapshot))
+         (alt (car (heliograph--solar-at start (plist-get snapshot :latitude)
+                                        (plist-get snapshot :longitude))))
+         (state (heliograph--illumination alt)) parts)
+    (dotimes (i cells)
+      (let ((sample (+ start (* duration (/ (+ i 0.5) cells)))))
+        (while (and events (<= (caar events) sample))
+          (setq state (pcase (cdar events)
+                        ('dawn ?:) ('sunrise ?*) ('sunset ?:) ('dusk ?.))
+                events (cdr events)))
+        (push (if (= i index)
+                  (heliograph--solar-marker (>= (plist-get snapshot :alt) -0.833))
+                (char-to-string state)) parts)))
+    (list (mapconcat #'identity (nreverse parts) (if spaced " " ""))
+          (* index (if spaced 2 1)))))
+
+(defun heliograph--solar-description (snapshot)
+  "Describe actual solar motion in SNAPSHOT."
+  (let* ((time (plist-get snapshot :time))
+         (lat (plist-get snapshot :latitude)) (lon (plist-get snapshot :longitude))
+         (before (car (heliograph--solar-at (time-subtract time 120) lat lon)))
+         (after (car (heliograph--solar-at (time-add time 120) lat lon))))
+    (cond ((< (plist-get snapshot :alt) -0.833) "below horizon")
+          ((and (> (plist-get snapshot :alt) before)
+                (> (plist-get snapshot :alt) after)) "culminating")
+          ((> after before) "ascending") (t "westering"))))
+
+(defun heliograph--text-center (snapshot width height)
+  "Build responsive inscription lines for SNAPSHOT in WIDTH and HEIGHT."
+  (let* ((columns (max 1 (if (display-graphic-p)
+                              (/ width (max 1 (frame-char-width))) width)))
+         (lines-available (if (display-graphic-p)
+                              (/ height (max 1 (frame-char-height))) height))
+         (full (and (>= columns 48) (>= lines-available 7)))
+         (compact (and (>= columns 20) (>= lines-available 4)))
+         (spaced compact)
+         (cells (if spaced (min 37 (/ (1+ columns) 2)) (min 37 columns)))
+         (inscription (heliograph--inscription snapshot cells spaced))
+         (line (car inscription)) (column (cadr inscription))
+         (state (heliograph--solar-description snapshot))
+         (event (cl-find-if
+                 (lambda (event) (> (car event) (float-time (plist-get snapshot :time))))
+                 (heliograph--solar-events snapshot)))
+         (observation (concat (heliograph--solar-marker
+                               (>= (plist-get snapshot :alt) -0.833)) " " state
+                              (if event
+                                  (format " · %s %s" (cdr event)
+                                          (format-time-string "%H:%M" (car event)))
+                                " · no further solar event today")))
+         (clock (format-time-string "%H:%M" (plist-get snapshot :time)))
+         (clock-column (max 0 (min (- columns 5) (- column 2)))))
+    (if compact
+        (append (when full (list "H E L I O G R A P H" ""))
+                (list line (concat (make-string column ?\s)
+                                   (if (char-displayable-p ?│) "│" "|"))
+                      (concat (make-string clock-column ?\s) clock)
+                      (if (<= (string-width observation) columns) observation
+                        (truncate-string-to-width
+                         (concat (heliograph--solar-marker
+                                  (>= (plist-get snapshot :alt) -0.833)) " " state)
+                         columns)))
+                (when full
+                  (list (format "altitude %+.2f° · azimuth %.0f°"
+                                (plist-get snapshot :alt) (plist-get snapshot :az)))))
+      (if (and (>= lines-available 2) (>= columns 12))
+          (list line (truncate-string-to-width state columns))
+        (list (if (>= columns (+ 8 (length state)))
+                  (concat (car (heliograph--inscription
+                                snapshot (- columns (length state) 2))) "  " state)
+                line))))))
+
 (defun heliograph--draw-solar-segment (svg start end night gold)
   "Draw a solar segment from START to END on SVG in GOLD.
 NIGHT selects the dim engraved treatment."
@@ -863,7 +996,18 @@ A failed element never changes the capabilities of its siblings."
            (status (list (heliograph--text-element "● READY" 'heliograph-ready)))
            (center (heliograph--enhance
                     (lambda () (heliograph-node-image (heliograph--center-node snapshot)))
-                    (heliograph--text-element "[ SOLAR INSTRUMENT ]" 'heliograph-gold)))
+                    (let* ((reserved (apply #'+ (mapcar #'heliograph--row-height
+                                                        (append (car composition)
+                                                                (cdr composition)
+                                                                controls (list status)))))
+                           (lines (heliograph--text-center snapshot width
+                                                          (max 0 (- height reserved))))
+                           (element (heliograph--text-element
+                                     (mapconcat #'identity lines "\n") 'heliograph-gold)))
+                      (plist-put element :height
+                                 (* (length lines) (if (display-graphic-p)
+                                                      (frame-char-height) 1)))
+                      element)))
            (rows (append (car composition) (cdr composition) controls (list status)))
            (free (max 0 (- height (plist-get center :height)
                            (apply #'+ (mapcar #'heliograph--row-height rows)))))
@@ -871,9 +1015,19 @@ A failed element never changes the capabilities of its siblings."
       (erase-buffer)
       (dolist (row (car composition)) (heliograph--insert-row row width))
       (heliograph--gap before)
-      (heliograph--align (max 0 (/ (- width (plist-get center :width)) 2)))
-      (heliograph--insert-element center)
-      (insert "\n")
+      (if (plist-get center :image)
+          (progn
+            (heliograph--align (max 0 (/ (- width (plist-get center :width)) 2)))
+            (heliograph--insert-element center)
+            (insert "\n"))
+        (let* ((lines (split-string (plist-get center :text) "\n"))
+               (block-width (apply #'max (mapcar (lambda (line)
+                                                  (plist-get (heliograph--text-element line)
+                                                             :width)) lines)))
+               (left (max 0 (/ (- width block-width) 2))))
+          (dolist (line lines)
+            (heliograph--align left)
+            (insert line "\n"))))
       (heliograph--gap (- free before))
       (dolist (row (cdr composition)) (heliograph--insert-row row width))
       (dolist (row controls)
