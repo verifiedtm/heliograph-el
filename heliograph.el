@@ -401,23 +401,23 @@ instrument uses the same north-up zenithal projection as the basic
 solar renderer.  Works without GeoClue using the manual location."
   (let* ((window-width (plist-get context :window-width))
          (window-height (plist-get context :window-height))
-         ;; Preserve the original 640x420 plate in compact windows.
+         ;; Leave room above and below the dial for stacked inscriptions.
          ;; On a spacious display, enlarge the entire SVG uniformly.
          ;; Keep room for the header, telemetry, and native buttons.
-         (available (max 420 (- window-height 240)))
+         (available (max 480 (- window-height 240)))
          (scale (if (and (> window-width 1000)
                          (> window-height 700))
-                    (min 1.65 (/ available 420.0)
+                    (min 1.65 (/ available 480.0)
                          (/ window-width 640.0))
                   1.0))
          (width (round (* 640 scale)))
-         (height (round (* 420 scale)))
+         (height (round (* 480 scale)))
          (cx 320.0) (cy 210.0) (horizon 140.0)
          (gold "#cda769") (bright "#efd194")
          (dim "#6e664f") (accent "#86b7aa")
          ;; A fixed coordinate system keeps every ring, arc, inscription,
          ;; and tick proportionate at all window sizes.
-         (svg (svg-create width height :viewBox "0 0 640 420"))
+         (svg (svg-create width height :viewBox "0 -30 640 480"))
          (alt (plist-get snapshot :alt))
          (az (plist-get snapshot :az))
          (point (heliograph--instrument-point
@@ -488,10 +488,10 @@ solar renderer.  Works without GeoClue using the manual location."
     (svg-text svg "HCA / ARRAY 01" :x 16 :y 28
               :font-family "monospace" :font-size 12 :fill gold)
     (svg-text svg "ZENITHAL SOLAR PROJECTION"
-              :x cx :y 11 :text-anchor "middle"
+              :x cx :y -10 :text-anchor "middle"
               :font-family "monospace" :font-size 11 :fill gold)
-    (dolist (mark '(("N" 320 34) ("E" 529 215)
-                    ("S" 320 408) ("W" 111 215)))
+    (dolist (mark '(("N" 320 10) ("E" 529 215)
+                    ("S" 320 418) ("W" 111 215)))
       (svg-text svg (car mark) :x (nth 1 mark) :y (nth 2 mark)
                 :font-family "monospace" :font-size 13
                 :font-weight "bold" :text-anchor "middle" :fill bright))
@@ -501,7 +501,7 @@ solar renderer.  Works without GeoClue using the manual location."
               :font-family "monospace" :font-size 9 :fill dim)
     (when (< alt 0)
       (svg-text svg "SOL BELOW HORIZON"
-                :x cx :y 419 :text-anchor "middle"
+                :x cx :y 440 :text-anchor "middle"
                 :font-family "monospace" :font-size 10 :fill accent))
     (make-heliograph-node :image (svg-image svg :ascent 'center)
                           :width width :height height)))
