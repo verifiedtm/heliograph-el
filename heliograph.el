@@ -167,6 +167,42 @@ zenith at the center and the horizon on the outer solid circle."
                   :text-anchor "middle" :fill accent))
       (svg-image s :ascent 'center))))
 
+(cl-defstruct heliograph-node
+  "A graphical center element with explicit pixel dimensions."
+  image width height)
+
+(defun heliograph-render-center-solar (snapshot _context)
+  "Render the existing solar instrument from SNAPSHOT.
+_CONTEXT is reserved for responsive instruments."
+  (make-heliograph-node :image (heliograph--dial snapshot)
+                        :width 640 :height 420))
+
+(defcustom heliograph-center-renderer #'heliograph-render-center-solar
+  "Renderer function for the center of the graphical dashboard.
+Called with SNAPSHOT and a context plist.  Must return a
+`heliograph-node' with an image and positive pixel dimensions."
+  :type 'function :group 'heliograph)
+
+(defun heliograph--gui-context ()
+  "Describe the available window geometry and presentation palette."
+  (list :window-width (window-body-width nil t)
+        :window-height (window-body-height nil t)
+        :gold "#efd194" :white "#f1f0eb"
+        :dim "#9d8155" :accent "#83b6aa"))
+
+(defun heliograph--center-node (snapshot)
+  "Render the center node for SNAPSHOT, validating its dimensions."
+  (let ((node (funcall heliograph-center-renderer
+                       snapshot (heliograph--gui-context))))
+    (unless (and (heliograph-node-p node)
+                 (heliograph-node-image node)
+                 (integerp (heliograph-node-width node))
+                 (> (heliograph-node-width node) 0)
+                 (integerp (heliograph-node-height node))
+                 (> (heliograph-node-height node) 0))
+      (error "Heliograph center renderer must return a valid heliograph-node"))
+    node))
+
 (defun heliograph--line (s &optional face)
   "Insert S as one line with optional FACE."
   (insert (if face (propertize s 'face face) s) "\n"))
@@ -276,17 +312,20 @@ HEADING renders the institutional left-side label in gold."
     (insert-image (svg-image (svg-create 1 pixels)))
     (insert "\n")))
 
-(defun heliograph--gui-render (snapshot dial)
-  "Render a full-window graphical SNAPSHOT with centered instrument DIAL.
+(defun heliograph--gui-render (snapshot node)
+  "Render a full-window graphical SNAPSHOT with centered instrument NODE.
 The final telemetry panel is bottom-anchored when the window is tall
 enough; smaller windows scroll naturally instead of overlapping."
   (let* ((height (window-body-height nil t))
+         (center-width (heliograph-node-width node))
+         (center-height (heliograph-node-height node))
+         (center-image (heliograph-node-image node))
          (lh (max 1 (frame-char-height)))
          ;; Header = 2 strips + rule; footer = rule, 4 strips,
          ;; rule, and one native interactive command line.
          (top-height (+ 48 3))
          (footer-height (+ 3 (* 4 24) 3 lh))
-         (free (max 0 (- height top-height 420 footer-height)))
+         (free (max 0 (- height top-height center-height footer-height)))
          (before (/ free 2))
          (after (- free before)))
     (heliograph--gui-pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY"
@@ -295,9 +334,10 @@ enough; smaller windows scroll naturally instead of overlapping."
     (heliograph--gui-pair (format "STATION %s" heliograph-station)
                           (plist-get snapshot :date))
     (heliograph--gui-gap before)
-    (when (>= (window-body-width nil t) 640)
-      (heliograph--gui-align '(- center (320))))
-    (insert-image dial)
+    (when (>= (window-body-width nil t) center-width)
+      (heliograph--gui-align
+       `(- center (,(floor center-width 2)))))
+    (insert-image center-image)
     (insert "\n")
     (heliograph--gui-gap after)
     (heliograph--gui-rule)
@@ -334,7 +374,7 @@ enough; smaller windows scroll naturally instead of overlapping."
               (inhibit-read-only t)
               (snapshot (heliograph--snapshot)))
           (erase-buffer)
-          (heliograph--gui-render snapshot (heliograph--dial snapshot))
+          (heliograph--gui-render snapshot (heliograph--center-node snapshot))
           (goto-char (point-min))))
     (heliograph--render-text)))
 
