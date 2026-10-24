@@ -21,6 +21,8 @@
 
 (defvar-local heliograph--timer nil)
 (defvar-local heliograph--busy nil)
+(defvar-local heliograph--renderer 'auto
+  "Renderer for this buffer: auto, svg, or text.")
 
 (defun heliograph--solar-position (&optional time)
   "Approximate (ALTITUDE AZIMUTH) in degrees at TIME.
@@ -183,7 +185,8 @@ zenith at the center and the horizon on the outer solid circle."
     (let* ((heliograph--busy t)
            (inhibit-read-only t)
            (snapshot (heliograph--snapshot))
-           (dial (heliograph--dial snapshot))
+           (dial (unless (eq heliograph--renderer 'text)
+                   (heliograph--dial snapshot)))
            (width (max 40 (min 74 (1- (window-body-width))))))
       (erase-buffer)
       (heliograph--line (make-string width ?═) 'heliograph-gold)
@@ -263,22 +266,49 @@ zenith at the center and the horizon on the outer solid circle."
   (interactive)
   (heliograph--render))
 
-;;;###autoload
-(defun heliograph ()
-  "Open the heliographic observatory console."
-  (interactive)
-  (let ((buffer (get-buffer-create "*heliograph*")))
+(defun heliograph--open (renderer)
+  "Open the observatory console using RENDERER.
+RENDERER is one of auto, svg, or text."
+  (when (and (eq renderer 'svg)
+             (not (and (display-graphic-p)
+                       (image-type-available-p 'svg))))
+    (user-error "SVG display is not available in this Emacs frame"))
+  (let ((buffer (get-buffer-create
+                 (pcase renderer
+                   ('svg "*heliograph-svg*")
+                   ('text "*heliograph-text*")
+                   (_ "*heliograph*")))))
     (pop-to-buffer buffer)
     (with-current-buffer buffer
       (unless (derived-mode-p 'heliograph-mode)
         (heliograph-mode))
+      (setq-local heliograph--renderer renderer)
       (heliograph--render)
       (heliograph--start-timer))))
+
+;;;###autoload
+(defun heliograph ()
+  "Open heliograph, choosing SVG or text for the current frame."
+  (interactive)
+  (heliograph--open 'auto))
+
+;;;###autoload
+(defun heliograph-svg ()
+  "Open the graphical SVG observatory console."
+  (interactive)
+  (heliograph--open 'svg))
+
+;;;###autoload
+(defun heliograph-text ()
+  "Open the text observatory console, even in graphical Emacs."
+  (interactive)
+  (heliograph--open 'text))
 
 ;;;###autoload
 (defun heliograph-dashboard-widget ()
   "Insert heliographic console into Doom's dashboard buffer.
 Use as the only dashboard rendering function on supported Doom versions."
+  (setq-local heliograph--renderer 'auto)
   (heliograph--render)
   (heliograph--start-timer))
 
