@@ -325,6 +325,7 @@ enough; smaller windows scroll naturally instead of overlapping."
 
 (defun heliograph--render ()
   "Render graphical layout, or preserve the original text presentation."
+  (setq-local heliograph--resize-enabled t)
   (if (and (not (eq heliograph--renderer 'text))
            (display-graphic-p)
            (image-type-available-p 'svg))
@@ -336,6 +337,35 @@ enough; smaller windows scroll naturally instead of overlapping."
           (heliograph--gui-render snapshot (heliograph--dial snapshot))
           (goto-char (point-min))))
     (heliograph--render-text)))
+
+(defvar-local heliograph--resize-enabled nil
+  "Non-nil when this buffer should reflow on window resize.")
+
+(defun heliograph--window-size ()
+  "Return the selected window's body size in pixels."
+  (cons (window-body-width nil t) (window-body-height nil t)))
+
+(defun heliograph--on-window-resize (frame)
+  "Reflow visible graphical heliograph windows on FRAME resize.
+Ignore text mode and windows whose pixel dimensions have not changed."
+  (dolist (window (window-list frame 'no-minibuf))
+    (when (window-live-p window)
+      (let ((buffer (window-buffer window)))
+        (with-current-buffer buffer
+          (when (and heliograph--resize-enabled
+                     (not (eq heliograph--renderer 'text))
+                     (display-graphic-p frame)
+                     (image-type-available-p 'svg))
+            (let ((size (cons (window-body-width window t)
+                              (window-body-height window t))))
+              (unless (equal size (window-parameter window 'heliograph--size))
+                (set-window-parameter window 'heliograph--size size)
+                (with-selected-window window
+                  (heliograph--render))))))))))
+
+;; Registered once per Emacs session.  The callback does nothing unless a
+;; graphical heliograph buffer is displayed in the resized frame.
+(add-hook 'window-size-change-functions #'heliograph--on-window-resize)
 
 (defvar heliograph-mode-map
   (let ((map (make-sparse-keymap)))
