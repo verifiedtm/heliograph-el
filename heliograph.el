@@ -598,15 +598,18 @@ Called with SNAPSHOT and a context plist.  Must return a
   :type '(number :tag "Glow opacity")
   :group 'heliograph)
 
-(defun heliograph--gui-text (text &optional gold)
+(defun heliograph--gui-text (text &optional gold right-align)
   "Create one SVG image for TEXT, gold if GOLD, otherwise white.
-Gold labels are two points larger than the white labels."
+Gold labels are two points larger than the white labels.
+RIGHT-ALIGN anchors the lettering to the canvas's right inset."
   (let* ((size (if gold 15 13))
          (color (if gold "#efd194" "#f1f0eb"))
          (width (ceiling (+ 12 (* (length text) size 0.74))))
          (canvas (svg-create width 24))
-         (attrs (list :x 5 :y 18 :font-family "monospace"
-                      :font-size size :text-anchor "start")))
+         (attrs (list :x (if right-align (- width 5) 5)
+                      :y 18 :font-family "monospace"
+                      :font-size size
+                      :text-anchor (if right-align "end" "start"))))
     (apply #'svg-text canvas text
            (append attrs (list :fill "none" :stroke color
                                :stroke-opacity heliograph-svg-glow
@@ -619,7 +622,7 @@ Gold labels are two points larger than the white labels."
   "Draw separate SVG components for LEFT and RIGHT.
 HEADING renders the institutional left-side label in gold."
   (let ((left-image (heliograph--gui-text left heading))
-        (right-image (heliograph--gui-text right nil)))
+        (right-image (heliograph--gui-text right nil t)))
     (heliograph--gui-align '(12))
     (insert-image left-image)
     (heliograph--gui-align
