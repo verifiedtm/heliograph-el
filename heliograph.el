@@ -566,9 +566,9 @@ The midnight endpoints are deliberately not joined."
          (point (heliograph--project-altaz alt (plist-get snapshot :az)
                                            cx cy horizon)))
     (svg-line svg cx cy (car point) (cdr point)
-              :stroke (if (< alt 0) gold accent) :stroke-width 1.2
+              :stroke gold :stroke-width 1.2
               :stroke-opacity (if (< alt 0) 0.5 1.0)
-              :stroke-dasharray (if (< alt 0) "3,5" "none"))
+              :stroke-dasharray "3,5")
     (when (>= alt 0.0)
       (svg-circle svg (car point) (cdr point) 12
                   :stroke gold :stroke-width 0.9
