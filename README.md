@@ -51,3 +51,27 @@ inspect your installed doom module before selecting the variable. this is experi
 ## roadmap
 
 responsive layout; tested doom-version adapters; richer instrument engraving; accurate lunar ephemeris and astronomical twilight; optional staged startup animation; automated emacs test suite.
+
+## custom center instruments
+
+the graphical dashboard calls `heliograph-center-renderer` with a snapshot
+and context plist (window size and palette). the renderer must return a
+`heliograph-node` holding its image and pixel dimensions. the default is
+`heliograph-render-center-solar`.
+
+```elisp
+(defun my-heliograph-center (snapshot context)
+  (let* ((width 320)
+         (height 180)
+         (canvas (svg-create width height)))
+    (svg-text canvas
+              (format "SOL %+0.1f°" (plist-get snapshot :alt))
+              :x 20 :y 90 :fill (plist-get context :gold))
+    (make-heliograph-node :image (svg-image canvas)
+                          :width width :height height)))
+
+(setq heliograph-center-renderer #'my-heliograph-center)
+```
+
+refresh with `g`. the layout uses the returned dimensions rather than
+hardcoded solar-dial dimensions. this affects graphical emacs only.
