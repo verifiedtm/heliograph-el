@@ -82,6 +82,11 @@ Reopen heliograph after changing the refresh interval.
 and palette), and returns a `heliograph-node` containing its image and pixel
 dimensions.
 
+The default SVG instrument scales to the space left by the header, telemetry,
+and controls, including on smaller windows. It resizes automatically with the
+window. Custom renderers receive this remaining pixel height as
+`:available-height` in the context plist.
+
 ## controls
 
 `f` find file, `p` switch project, `r` recent files, `c` customize, `g` refresh, `q` quit.

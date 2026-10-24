@@ -730,17 +730,14 @@ instrument uses the same north-up zenithal projection as the basic
 solar renderer.  Works without GeoClue using the manual location."
   (let* ((window-width (plist-get context :window-width))
          (window-height (plist-get context :window-height))
-         ;; Leave room above and below the dial for stacked inscriptions.
-         ;; On a spacious display, enlarge the entire SVG uniformly.
-         ;; Keep room for the header, telemetry, and native buttons.
-         (available (max 540 (- window-height 240)))
-         (scale (if (and (> window-width 1000)
-                         (> window-height 700))
-                    (min 1.65 (/ available 540.0)
-                         (/ window-width 640.0))
-                  1.0))
-         (width (round (* 640 scale)))
-         (height (round (* 540 scale)))
+         ;; Composition supplies the measured space left by surrounding rows.
+         ;; Retain an allowance for callers that only supply window geometry.
+         (available (max 1 (or (plist-get context :available-height)
+                               (- window-height 240))))
+         (scale (min 1.65 (/ available 540.0)
+                     (/ (max 1 window-width) 640.0)))
+         (width (max 1 (floor (* 640 scale))))
+         (height (max 1 (floor (* 540 scale))))
          (cx 320.0) (cy 210.0) (horizon 140.0)
          (gold "#cda769") (bright "#efd194")
          (dim "#6e664f") (accent "#86b7aa")
@@ -783,10 +780,13 @@ Called with SNAPSHOT and a context plist.  Must return a
         :gold "#efd194" :white "#f1f0eb"
         :dim "#9d8155" :accent "#83b6aa"))
 
-(defun heliograph--center-node (snapshot)
-  "Render the center node for SNAPSHOT, validating its dimensions."
+(defun heliograph--center-node (snapshot &optional available-height)
+  "Render the center node for SNAPSHOT, validating its dimensions.
+AVAILABLE-HEIGHT is the pixel space left after surrounding rows."
   (let ((node (funcall heliograph-center-renderer
-                       snapshot (heliograph--gui-context))))
+                       snapshot (append (heliograph--gui-context)
+                                        (when available-height
+                                          (list :available-height available-height))))))
     (unless (and (heliograph-node-p node)
                  (heliograph-node-image node)
                  (integerp (heliograph-node-width node))
@@ -997,13 +997,13 @@ A failed element never changes the capabilities of its siblings."
            (composition (heliograph--composition snapshot width))
            (controls (heliograph--control-rows width))
            (status (list (heliograph--text-element "● READY" 'heliograph-ready)))
+           (rows (append (car composition) (cdr composition) controls (list status)))
+           (reserved (apply #'+ (mapcar #'heliograph--row-height rows)))
+           (available (max 1 (- height reserved)))
            (center (heliograph--enhance
-                    (lambda () (heliograph-node-image (heliograph--center-node snapshot)))
-                    (let* ((reserved (apply #'+ (mapcar #'heliograph--row-height
-                                                        (append (car composition)
-                                                                (cdr composition)
-                                                                controls (list status)))))
-                           (lines (heliograph--text-center snapshot width
+                    (lambda () (heliograph-node-image
+                                (heliograph--center-node snapshot available)))
+                    (let* ((lines (heliograph--text-center snapshot width
                                                           (max 0 (- height reserved))))
                            (element (heliograph--text-element
                                      (mapconcat #'identity lines "\n") 'heliograph-gold)))
@@ -1011,9 +1011,8 @@ A failed element never changes the capabilities of its siblings."
                                  (* (length lines) (if (display-graphic-p)
                                                       (frame-char-height) 1)))
                       element)))
-           (rows (append (car composition) (cdr composition) controls (list status)))
            (free (max 0 (- height (plist-get center :height)
-                           (apply #'+ (mapcar #'heliograph--row-height rows)))))
+                           reserved)))
            (before (/ free 2)))
       (erase-buffer)
       (dolist (row (car composition)) (heliograph--insert-row row width))
