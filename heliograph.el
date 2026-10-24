@@ -182,13 +182,20 @@ A location fix may arrive later; manual coordinates are used meanwhile."
 (defvar-local heliograph--renderer 'auto
   "Renderer for this buffer: auto, svg, or text.")
 
+(defvar-local heliograph--observation-time nil
+  "Selected observation time, or nil to follow the wall clock.")
+
 (defun heliograph--solar-position (&optional time)
+  "Return approximate solar coordinates at TIME using resolved location."
+  (let ((location (heliograph--location)))
+    (heliograph--solar-at (or time (current-time))
+                         (car location) (cdr location))))
+
+(defun heliograph--solar-at (time latitude longitude)
   "Approximate (ALTITUDE AZIMUTH) in degrees at TIME.
+TIME and observer LATITUDE and LONGITUDE are explicit inputs.
 NOAA fractional-year approximation.  Not intended for navigation."
-  (let* ((location (heliograph--location))
-         (heliograph-latitude (car location))
-         (heliograph-longitude (cdr location))
-         (date (decode-time (or time (current-time)) 0))
+  (let* ((date (decode-time time 0))
          (day (time-to-days (encode-time 0 0 12
                                          (decoded-time-day date)
                                          (decoded-time-month date)
@@ -213,9 +220,9 @@ NOAA fractional-year approximation.  Not intended for navigation."
                   (* 0.00148 (sin (* 3 gamma)))))
          (ha (* (/ float-pi 180.0)
                 (/ (- (mod (+ minutes eqtime
-                              (* 4.0 heliograph-longitude)) 1440.0)
+                              (* 4.0 longitude)) 1440.0)
                       720.0) 4.0)))
-         (lat (* (/ float-pi 180.0) heliograph-latitude))
+         (lat (* (/ float-pi 180.0) latitude))
          (alt (asin (max -1.0 (min 1.0
                                    (+ (* (sin lat) (sin decl))
                                       (* (cos lat) (cos decl) (cos ha)))))))
@@ -225,24 +232,40 @@ NOAA fractional-year approximation.  Not intended for navigation."
     (list (* 180.0 (/ alt float-pi))
           (mod (+ 180.0 (* 180.0 (/ az float-pi))) 360.0))))
 
-(defun heliograph--lunar-illumination ()
+(defun heliograph--lunar-illumination (&optional time)
   "Return estimated lunar illumination percentage.
 Simple synodic cycle, NOT a precision ephemeris."
   (let* ((days (/ (float-time
-                   (time-subtract (current-time)
+                   (time-subtract (or time (current-time))
                                   (encode-time 0 0 18 6 1 2000 0))) 86400.0))
          (phase (mod (/ days 29.530588853) 1.0)))
     (cons (* 50.0 (- 1 (cos (* 2 float-pi phase))))
           (if (< phase 0.5) "WAXING" "WANING"))))
 
+(defun heliograph--observation-state ()
+  "Resolve time and observer coordinates once for this update."
+  (let ((time (or heliograph--observation-time (current-time)))
+        (location (heliograph--location)))
+    (list :time time :latitude (car location) :longitude (cdr location)
+          :historical (not (null heliograph--observation-time)))))
+
 (defun heliograph--snapshot ()
-  "Collect one observational snapshot."
-  (let ((sun (heliograph--solar-position))
-        (moon (heliograph--lunar-illumination)))
-    (list :alt (car sun) :az (cadr sun)
-          :illum (car moon) :phase (cdr moon)
-          :date (format-time-string "%Y-%m-%d %H:%M UTC" nil t)
-          :julian (+ 2440587.5 (/ (float-time) 86400.0)))))
+  "Collect consistent solar, lunar and calendar observations."
+  (let* ((state (heliograph--observation-state))
+         (time (plist-get state :time))
+         (sun (heliograph--solar-at time (plist-get state :latitude)
+                                   (plist-get state :longitude)))
+         (moon (heliograph--lunar-illumination time)))
+    (append state
+            (list :alt (car sun) :az (cadr sun)
+                  :illum (car moon) :phase (cdr moon)
+                  :date (format-time-string "%Y-%m-%d %H:%M UTC" time t)
+                  :julian (+ 2440587.5 (/ (float-time time) 86400.0))))))
+
+(defun heliograph--ephemeris-label (snapshot)
+  "Return the observation mode label for SNAPSHOT."
+  (if (plist-get snapshot :historical)
+      "EPHEMERIS / HISTORICAL" "EPHEMERIS / LIVE"))
 
 (defun heliograph--dial (snapshot)
   "Return a graphical solar instrument for SNAPSHOT, or nil in a tty.
@@ -263,10 +286,8 @@ zenith at the center and the horizon on the outer solid circle."
            (s (svg-create width height))
            (alt (plist-get snapshot :alt))
            (az (plist-get snapshot :az))
-           (theta (* float-pi (/ az 180.0)))
-           (r (* horizon (/ (- 90.0 alt) 90.0)))
-           (sx (+ cx (* r (sin theta))))
-           (sy (- cy (* r (cos theta)))))
+           (point (heliograph--project-altaz alt az cx cy horizon))
+           (sx (car point)) (sy (cdr point)))
       ;; Engraved plate and concentric altitude rings.
       (svg-circle s cx cy 170 :stroke dim :stroke-width 1 :fill "none")
       (dolist (radius '(46.67 93.33 140))
@@ -358,25 +379,72 @@ _CONTEXT is reserved for responsive instruments."
                   :stroke-dasharray (or dash "none")))
       (setq a (+ a 3.0)))))
 
-(defun heliograph--instrument-solar-arc (svg cx cy horizon gold bright)
-  "Draw today's actual above-horizon solar trajectory on SVG.
-Sample the local civil day at ten-minute intervals; stop at the horizon.
-This is a solar-position approximation, not a navigation ephemeris."
-  (let* ((now (decode-time (current-time)))
-         (day-start (encode-time 0 0 0
-                                 (decoded-time-day now)
-                                 (decoded-time-month now)
-                                 (decoded-time-year now)))
-         (previous nil)
-         (last-alt nil))
-    (dotimes (i 145)
-      (let* ((time (time-add day-start (seconds-to-time (* i 600))))
-             (sun (heliograph--solar-position time))
-             (alt (car sun))
-             (az (cadr sun))
+(defun heliograph--project-altaz (altitude azimuth cx cy horizon)
+  "Project ALTITUDE and AZIMUTH around CX, CY with HORIZON radius."
+  (heliograph--instrument-point
+   cx cy (* horizon (/ (- 90.0 altitude) 90.0)) azimuth))
+
+(defvar heliograph--daily-cache nil "Bounded cache of daily solar samples.")
+(defvar heliograph--plate-cache nil "Bounded cache of nominal SVG plates.")
+(defconst heliograph--cache-limit 4)
+
+(defun heliograph--cache-value (cache key calculate)
+  "Look up KEY in CACHE symbol, otherwise call CALCULATE and retain it.
+Keys include all calculation or painting inputs.  Keep four recent entries."
+  (let ((entry (assoc key (symbol-value cache))))
+    (if entry
+        (progn
+          (set cache (cons entry (delq entry (symbol-value cache))))
+          (cdr entry))
+      (let ((value (funcall calculate)))
+        (set cache (cl-subseq (cons (cons key value) (symbol-value cache))
+                             0 (min heliograph--cache-limit
+                                    (1+ (length (symbol-value cache))))))
+        value))))
+
+(defun heliograph--daily-solar-samples (time latitude longitude &optional step)
+  "Calculate local civil-day samples at TIME, LATITUDE and LONGITUDE.
+STEP is seconds between samples, default 600.  Include the next midnight;
+use civil dates rather than assuming every day lasts 24 hours."
+  (let* ((step (or step 600))
+         (date (decode-time time))
+         (day (decoded-time-day date))
+         (month (decoded-time-month date))
+         (year (decoded-time-year date))
+         (start (encode-time 0 0 0 day month year))
+         (end (encode-time 0 0 0 (1+ day) month year))
+         (duration (float-time (time-subtract end start)))
+         samples)
+    (unless (> step 0) (error "Sampling step must be positive"))
+    (let ((seconds 0))
+      (while (< seconds duration)
+        (push (heliograph--solar-at (time-add start seconds) latitude longitude)
+              samples)
+        (setq seconds (+ seconds step))))
+    (push (heliograph--solar-at end latitude longitude) samples)
+    (nreverse samples)))
+
+(defun heliograph--daily-samples (snapshot)
+  "Return cached daily samples for the resolved SNAPSHOT."
+  (let* ((time (plist-get snapshot :time))
+         (latitude (plist-get snapshot :latitude))
+         (longitude (plist-get snapshot :longitude))
+         (date (decode-time time))
+         (key (list (decoded-time-year date) (decoded-time-month date)
+                    (decoded-time-day date) (getenv "TZ")
+                    (current-time-zone time) latitude longitude 'noaa-v1 600)))
+    (heliograph--cache-value
+     'heliograph--daily-cache key
+     (lambda () (heliograph--daily-solar-samples time latitude longitude 600)))))
+
+(defun heliograph--draw-daily-ephemeris (svg samples cx cy horizon gold bright)
+  "Paint precomputed SAMPLES onto SVG at CX, CY and HORIZON radius.
+GOLD and BRIGHT specify the trajectory and observation marks."
+  (let ((previous nil) (last-alt nil) (i 0))
+    (dolist (sun samples)
+      (let* ((alt (car sun)) (az (cadr sun))
              (point (when (>= alt 0)
-                      (heliograph--instrument-point
-                       cx cy (* horizon (/ (- 90.0 alt) 90.0)) az))))
+                      (heliograph--project-altaz alt az cx cy horizon))))
         (when (and previous point)
           (svg-line svg (car previous) (cdr previous)
                     (car point) (cdr point)
@@ -391,7 +459,101 @@ This is a solar-position approximation, not a navigation ephemeris."
         (when (and previous (not point))
           (svg-circle svg (car previous) (cdr previous) 3.5
                       :stroke bright :stroke-width 1 :fill "none"))
-        (setq previous point last-alt alt)))))
+        (setq previous point last-alt alt i (1+ i))))))
+
+(defun heliograph--draw-instrument-plate (svg cx cy gold bright dim accent)
+  "Paint static engraving on SVG around CX, CY in the supplied palette."
+  ;; Outer engraved case and four altitude rings.  The central
+  ;; point corresponds to the zenith; the 140px ring is the horizon.
+  (dolist (ring '((140 . 1.3) (93.333 . 0.8)
+                  (46.667 . 0.8) (153 . 0.7) (170 . 1.0)))
+    (svg-circle svg cx cy (car ring)
+                :fill "none" :stroke (if (= (car ring) 170) dim gold)
+                :stroke-width (cdr ring)))
+  (heliograph--instrument-segment svg cx cy 160 0 360 dim 0.8 "2,5")
+  (heliograph--instrument-segment svg cx cy 177 0 360 dim 0.7 "1,5")
+  ;; Subtle segmented concentric arcs: visually elaborate, but
+  ;; static like calibration/registration marks.
+  (dolist (radius '(58 108 145 165))
+    (heliograph--instrument-segment svg cx cy radius 18 73 dim 0.9)
+    (heliograph--instrument-segment svg cx cy radius 196 252 dim 0.9))
+  (heliograph--instrument-segment svg cx cy 118 112 178 accent 0.65 "2,4")
+  (heliograph--instrument-segment svg cx cy 118 292 358 accent 0.65 "2,4")
+  ;; Compass grid and angular reference guides.
+  (dotimes (i 12)
+    (let* ((angle (* i 30.0))
+           (p (heliograph--instrument-point cx cy 0 angle))
+           (q (heliograph--instrument-point cx cy 140 angle)))
+      (svg-line svg (car p) (cdr p) (car q) (cdr q)
+                :stroke dim :stroke-width (if (zerop (mod i 3)) 0.95 0.6)
+                :stroke-dasharray (if (zerop (mod i 3)) "none" "3,6"))))
+  ;; Major graduations every 30 degrees; half-degree minor ticks.
+  (dotimes (i 720)
+    (let* ((angle (/ i 2.0))
+           (major (zerop (mod i 60)))
+           (medium (zerop (mod i 10)))
+           (inner (cond (major 153) (medium 162) (t 167)))
+           (p (heliograph--instrument-point cx cy inner angle))
+           (q (heliograph--instrument-point cx cy 173 angle)))
+      (svg-line svg (car p) (cdr p) (car q) (cdr q)
+                :stroke (if major bright gold)
+                :stroke-width (if major 1.6 (if medium 0.9 0.45)))))
+  ;; Calibrated azimuth labels just beyond the outer graduated ring.
+  (dotimes (i 12)
+    (let* ((angle (* i 30))
+           (p (heliograph--instrument-point cx cy 187 angle)))
+      (svg-text svg (format "%03d°" angle)
+                :x (car p) :y (+ 3 (cdr p))
+                :font-size 9 :font-family "monospace"
+                :text-anchor "middle" :fill gold)))
+  svg)
+
+(defun heliograph--draw-instrument-foreground (svg cx cy gold bright dim)
+  "Paint static pivot and inscriptions on SVG at CX, CY."
+  ;; Mechanical pivot, etched center reticle, and four registry dots.
+  (svg-circle svg cx cy 13 :stroke bright :stroke-width 1.3
+              :fill "#201e1a")
+  (svg-circle svg cx cy 8 :stroke gold :stroke-width 0.7 :fill "none")
+  (svg-circle svg cx cy 3 :fill bright)
+  (dolist (angle '(0 90 180 270))
+    (let ((p (heliograph--instrument-point cx cy 140 angle)))
+      (svg-circle svg (car p) (cdr p) 2.2 :fill bright)))
+  ;; Plate inscriptions frame rather than obscure the mechanism.
+  (svg-text svg "HCA / ARRAY 01" :x 16 :y 28
+            :font-family "monospace" :font-size 12 :fill gold)
+  (svg-text svg "ZENITHAL SOLAR PROJECTION"
+            :x cx :y -10 :text-anchor "middle"
+            :font-family "monospace" :font-size 11 :fill gold)
+  (dolist (mark '(("N" 320 10) ("E" 529 215)
+                  ("S" 320 418) ("W" 111 215)))
+    (svg-text svg (car mark) :x (nth 1 mark) :y (nth 2 mark)
+              :font-family "monospace" :font-size 13
+              :font-weight "bold" :text-anchor "middle" :fill bright))
+  (svg-text svg "60°" :x (+ cx 9) :y (- cy 46.667)
+            :font-family "monospace" :font-size 9 :fill dim)
+  (svg-text svg "30°" :x (+ cx 9) :y (- cy 93.333)
+            :font-family "monospace" :font-size 9 :fill dim)
+  svg)
+
+(defun heliograph--draw-live-observation (svg snapshot cx cy horizon gold bright accent)
+  "Paint the time-dependent marker on SVG using SNAPSHOT and palette."
+  (let* ((alt (plist-get snapshot :alt))
+         (point (heliograph--project-altaz alt (plist-get snapshot :az)
+                                           cx cy horizon)))
+    ;; Solar position: keep below-horizon readings off the visible dial.
+    (when (>= alt 0.0)
+      (svg-line svg cx cy (car point) (cdr point)
+                :stroke accent :stroke-width 1.2)
+      (svg-circle svg (car point) (cdr point) 12
+                  :stroke gold :stroke-width 0.9
+                  :stroke-opacity 0.6 :fill "none")
+      (svg-circle svg (car point) (cdr point) 6
+                  :stroke bright :stroke-width 1.5 :fill bright))
+    (when (< alt 0)
+      (svg-text svg "SOL BELOW HORIZON"
+                :x cx :y 440 :text-anchor "middle"
+                :font-family "monospace" :font-size 10 :fill accent))
+    svg))
 
 (defun heliograph-render-center-astrolabe (snapshot context)
   "Render an elaborate calibrated solar instrument for SNAPSHOT.
@@ -417,92 +579,27 @@ solar renderer.  Works without GeoClue using the manual location."
          (dim "#6e664f") (accent "#86b7aa")
          ;; A fixed coordinate system keeps every ring, arc, inscription,
          ;; and tick proportionate at all window sizes.
-         (svg (svg-create width height :viewBox "0 -30 640 480"))
-         (alt (plist-get snapshot :alt))
-         (az (plist-get snapshot :az))
-         (point (heliograph--instrument-point
-                 cx cy (* horizon (/ (- 90.0 alt) 90.0)) az)))
-    ;; Outer engraved case and four altitude rings.  The central
-    ;; point corresponds to the zenith; the 140px ring is the horizon.
-    (dolist (ring '((140 . 1.3) (93.333 . 0.8)
-                    (46.667 . 0.8) (153 . 0.7) (170 . 1.0)))
-      (svg-circle svg cx cy (car ring)
-                  :fill "none" :stroke (if (= (car ring) 170) dim gold)
-                  :stroke-width (cdr ring)))
-    (heliograph--instrument-segment svg cx cy 160 0 360 dim 0.8 "2,5")
-    (heliograph--instrument-segment svg cx cy 177 0 360 dim 0.7 "1,5")
-    ;; Subtle segmented concentric arcs: visually elaborate, but
-    ;; static like calibration/registration marks.
-    (dolist (radius '(58 108 145 165))
-      (heliograph--instrument-segment svg cx cy radius 18 73 dim 0.9)
-      (heliograph--instrument-segment svg cx cy radius 196 252 dim 0.9))
-    (heliograph--instrument-segment svg cx cy 118 112 178 accent 0.65 "2,4")
-    (heliograph--instrument-segment svg cx cy 118 292 358 accent 0.65 "2,4")
-    ;; Compass grid and angular reference guides.
-    (dotimes (i 12)
-      (let* ((angle (* i 30.0))
-             (p (heliograph--instrument-point cx cy 0 angle))
-             (q (heliograph--instrument-point cx cy 140 angle)))
-        (svg-line svg (car p) (cdr p) (car q) (cdr q)
-                  :stroke dim :stroke-width (if (zerop (mod i 3)) 0.95 0.6)
-                  :stroke-dasharray (if (zerop (mod i 3)) "none" "3,6"))))
-    ;; Major graduations every 30 degrees; half-degree minor ticks.
-    (dotimes (i 720)
-      (let* ((angle (/ i 2.0))
-             (major (zerop (mod i 60)))
-             (medium (zerop (mod i 10)))
-             (inner (cond (major 153) (medium 162) (t 167)))
-             (p (heliograph--instrument-point cx cy inner angle))
-             (q (heliograph--instrument-point cx cy 173 angle)))
-        (svg-line svg (car p) (cdr p) (car q) (cdr q)
-                  :stroke (if major bright gold)
-                  :stroke-width (if major 1.6 (if medium 0.9 0.45)))))
-    ;; Calibrated azimuth labels just beyond the outer graduated ring.
-    (dotimes (i 12)
-      (let* ((angle (* i 30))
-             (p (heliograph--instrument-point cx cy 187 angle)))
-        (svg-text svg (format "%03d°" angle)
-                  :x (car p) :y (+ 3 (cdr p))
-                  :font-size 9 :font-family "monospace"
-                  :text-anchor "middle" :fill gold)))
-    ;; The daily solar arc, computed from position samples.
-    (heliograph--instrument-solar-arc svg cx cy horizon gold bright)
-    ;; Solar position: keep below-horizon readings off the visible dial.
-    (when (>= alt 0.0)
-      (svg-line svg cx cy (car point) (cdr point)
-                :stroke accent :stroke-width 1.2)
-      (svg-circle svg (car point) (cdr point) 12
-                  :stroke gold :stroke-width 0.9
-                  :stroke-opacity 0.6 :fill "none")
-      (svg-circle svg (car point) (cdr point) 6
-                  :stroke bright :stroke-width 1.5 :fill bright))
-    ;; Mechanical pivot, etched center reticle, and four registry dots.
-    (svg-circle svg cx cy 13 :stroke bright :stroke-width 1.3
-                :fill "#201e1a")
-    (svg-circle svg cx cy 8 :stroke gold :stroke-width 0.7 :fill "none")
-    (svg-circle svg cx cy 3 :fill bright)
-    (dolist (angle '(0 90 180 270))
-      (let ((p (heliograph--instrument-point cx cy 140 angle)))
-        (svg-circle svg (car p) (cdr p) 2.2 :fill bright)))
-    ;; Plate inscriptions frame rather than obscure the mechanism.
-    (svg-text svg "HCA / ARRAY 01" :x 16 :y 28
-              :font-family "monospace" :font-size 12 :fill gold)
-    (svg-text svg "ZENITHAL SOLAR PROJECTION"
-              :x cx :y -10 :text-anchor "middle"
-              :font-family "monospace" :font-size 11 :fill gold)
-    (dolist (mark '(("N" 320 10) ("E" 529 215)
-                    ("S" 320 418) ("W" 111 215)))
-      (svg-text svg (car mark) :x (nth 1 mark) :y (nth 2 mark)
-                :font-family "monospace" :font-size 13
-                :font-weight "bold" :text-anchor "middle" :fill bright))
-    (svg-text svg "60°" :x (+ cx 9) :y (- cy 46.667)
-              :font-family "monospace" :font-size 9 :fill dim)
-    (svg-text svg "30°" :x (+ cx 9) :y (- cy 93.333)
-              :font-family "monospace" :font-size 9 :fill dim)
-    (when (< alt 0)
-      (svg-text svg "SOL BELOW HORIZON"
-                :x cx :y 440 :text-anchor "middle"
-                :font-family "monospace" :font-size 10 :fill accent))
+         (svg (svg-create width height :viewBox "0 -30 640 480")))
+    (let* ((key (list 640 480 'zenithal-v1 gold bright dim accent))
+           (plates (heliograph--cache-value
+                    'heliograph--plate-cache key
+                    (lambda ()
+                      (let ((back (svg-create 640 480))
+                            (front (svg-create 640 480)))
+                        (heliograph--draw-instrument-plate
+                         back cx cy gold bright dim accent)
+                        (heliograph--draw-instrument-foreground
+                         front cx cy gold bright dim)
+                        (cons back front))))))
+      ;; Copy cached DOMs: SVG helpers mutate their target tree.
+      (dolist (child (cddr (copy-tree (car plates))))
+        (dom-append-child svg child))
+      (heliograph--draw-daily-ephemeris
+       svg (heliograph--daily-samples snapshot) cx cy horizon gold bright)
+      (heliograph--draw-live-observation
+       svg snapshot cx cy horizon gold bright accent)
+      (dolist (child (cddr (copy-tree (cdr plates))))
+        (dom-append-child svg child)))
     (make-heliograph-node :image (svg-image svg :ascent 'center)
                           :width width :height height)))
 
@@ -569,6 +666,7 @@ Called with SNAPSHOT and a context plist.  Must return a
           (heliograph--line line 'heliograph-gold))
         (insert "\n"))
       (heliograph--line "  CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01" 'heliograph-gold)
+      (heliograph--line (heliograph--ephemeris-label snapshot) 'heliograph-muted)
       (heliograph--line (make-string width ?─) 'heliograph-muted)
       (heliograph--line (format "  SOLAR ALTITUDE       %+7.2f°   SOLAR AZIMUTH   %7.2f°"
                                 (plist-get snapshot :alt) (plist-get snapshot :az)))
@@ -674,7 +772,7 @@ enough; smaller windows scroll naturally instead of overlapping."
     (heliograph--gui-gap after)
     (heliograph--gui-rule)
     (heliograph--gui-pair "CELESTIAL OBSERVATION ARRAY / INSTRUMENT 01"
-                          "EPHEMERIS / LIVE" t)
+                          (heliograph--ephemeris-label snapshot) t)
     (heliograph--gui-pair
      (format "SOLAR ALTITUDE    %+6.2f°" (plist-get snapshot :alt))
      (format "SOLAR AZIMUTH    %6.2f°" (plist-get snapshot :az)))
@@ -740,12 +838,38 @@ Ignore text mode and windows whose pixel dimensions have not changed."
 ;; graphical heliograph buffer is displayed in the resized frame.
 (add-hook 'window-size-change-functions #'heliograph--on-window-resize)
 
+(defcustom heliograph-time-step-seconds 600
+  "Seconds moved by each observation-time step."
+  :type 'natnum :group 'heliograph)
+
+(defun heliograph-step-forward (&optional count)
+  "Move observation time forward COUNT steps, default one."
+  (interactive "p")
+  (setq heliograph--observation-time
+        (time-add (or heliograph--observation-time (current-time))
+                  (* (or count 1) heliograph-time-step-seconds)))
+  (heliograph--render))
+
+(defun heliograph-step-backward (&optional count)
+  "Move observation time backward COUNT steps, default one."
+  (interactive "p")
+  (heliograph-step-forward (- (or count 1))))
+
+(defun heliograph-now ()
+  "Return this dashboard to live observation time."
+  (interactive)
+  (setq heliograph--observation-time nil)
+  (heliograph--render))
+
 (defvar heliograph-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "f") #'find-file)
     (define-key map (kbd "p") #'project-switch-project)
     (define-key map (kbd "r") #'recentf-open-files)
     (define-key map (kbd "c") #'customize)
+    (define-key map (kbd "[") #'heliograph-step-backward)
+    (define-key map (kbd "]") #'heliograph-step-forward)
+    (define-key map (kbd "n") #'heliograph-now)
     (define-key map (kbd "g") #'heliograph-refresh)
     (define-key map (kbd "q") #'quit-window)
     map))
@@ -760,7 +884,8 @@ Ignore text mode and windows whose pixel dimensions have not changed."
   "Major mode for the heliographic console."
   (setq-local truncate-lines t)
   (setq-local cursor-type nil)
-  (add-hook 'kill-buffer-hook #'heliograph--cancel-timer nil t))
+  (add-hook 'kill-buffer-hook #'heliograph--cancel-timer nil t)
+  (add-hook 'change-major-mode-hook #'heliograph--cancel-timer nil t))
 
 (defun heliograph--start-timer ()
   "Refresh only while the dashboard is visible."
@@ -773,8 +898,10 @@ Ignore text mode and windows whose pixel dimensions have not changed."
              (lambda ()
                (when (buffer-live-p buffer)
                  (with-current-buffer buffer
-                   (when (get-buffer-window buffer t)
-                     (heliograph--render))))))))))
+                   (let ((window (get-buffer-window buffer t)))
+                     (when window
+                       (with-selected-window window
+			 (heliograph--render))))))))))))
 
 ;;;###autoload
 (defun heliograph-refresh ()
