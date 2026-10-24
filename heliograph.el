@@ -1091,6 +1091,10 @@ A failed element never changes the capabilities of its siblings."
   (let ((map (make-sparse-keymap)))
     ;; `special-mode' otherwise inherits Space as a scrolling command.
     (define-key map (kbd "SPC") #'ignore)
+    ;; Keep the dashboard fixed for both modern and legacy wheel events.
+    (dolist (event '(wheel-up wheel-down wheel-left wheel-right
+                     mouse-4 mouse-5 mouse-6 mouse-7))
+      (define-key map (vector event) #'ignore))
     (define-key map (kbd "f") #'find-file)
     (define-key map (kbd "p") #'project-switch-project)
     (define-key map (kbd "r") #'recentf-open-files)
