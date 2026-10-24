@@ -10,6 +10,7 @@ put `heliograph.el` somewhere on your emacs load path, then:
 (add-to-list 'load-path "~/src/heliograph-el")
 (require 'heliograph)
 (setq heliograph-station "WADJET"
+      heliograph-title "HELIOGRAPH v0.01"
       heliograph-latitude 40.7128
       heliograph-longitude -74.006)
 ```
@@ -19,6 +20,44 @@ evaluate `M-x heliograph` to open the standalone console.
 select a renderer explicitly with `M-x heliograph-svg` or `M-x heliograph-text`. the text command works even in a graphical frame, while the svg command requires svg support. each opens its own buffer; refreshes keep its selected renderer.
 
 All presentations share the same content and layout: a top header, centered instrument, and bottom telemetry and controls. Paired labels anchor to the left and right edges, stacking when space is tight. SVG enhances individual labels, rules, and the instrument; unavailable or failed elements fall back independently to native text. Window resizing redraws both modes; only the SVG center instrument scales, while the text placeholder keeps its fixed size. When the content exceeds the window height, it scrolls.
+
+## doom emacs
+
+add the package to `~/.config/doom/packages.el`:
+
+```elisp
+(package! heliograph
+  :recipe (:host github :repo "verifiedtm/heliograph-el"))
+```
+
+run `doom sync`, then add this to `~/.config/doom/config.el` to open
+heliograph as your initial buffer:
+
+```elisp
+(use-package! heliograph
+  :demand t
+  :init
+  (setq initial-buffer-choice
+        (lambda ()
+          (let ((buffer (get-buffer-create "*heliograph*")))
+            (with-current-buffer buffer
+              (unless (derived-mode-p 'heliograph-mode)
+                (heliograph-mode))
+              (setq-local heliograph--renderer 'auto)
+              (heliograph--render)
+              (heliograph--start-timer))
+            buffer)))
+  :commands (heliograph))
+```
+
+this startup setup is incompatible with doom's `:ui dashboard` module; disable
+that module in `init.el` when using it.
+
+restart emacs after updating the configuration.
+
+auto rendering uses svg where available and falls back to text per element.
+this setup opens a standalone heliograph buffer; to embed it in doom's
+existing dashboard instead, use the widget configuration below.
 
 ## doom dashboard integration
 
@@ -37,6 +76,23 @@ other revisions use `+dashboard-functions`:
 ```
 
 inspect your installed doom module before selecting the variable. this is experimental integration: doom controls buffer layout, redraw, and keymaps, so behavior can depend on the installed revision.
+
+## customization
+
+set these after loading heliograph (in doom, use `after! heliograph`).
+coordinates below are placeholders; geoclue is optional.
+
+| example | purpose |
+| --- | --- |
+| `(setq heliograph-title "HELIOGRAPH v0.01")` | header text |
+| `(setq heliograph-station "YOUR-STATION")` | station name |
+| `(setq heliograph-center-renderer #'heliograph-render-center-astrolabe)` | svg center instrument |
+| `(setq heliograph-location-provider 'manual)` | coordinate source; use `'geoclue` for automatic location |
+| `(setq heliograph-geoclue-desktop-id "emacs")` | geoclue authorization identity |
+| `(setq heliograph-latitude 0.0)` | latitude; geoclue fallback |
+| `(setq heliograph-longitude 0.0)` | longitude; geoclue fallback |
+
+see the geoclue2 section below for service and desktop authorization details.
 
 ## controls
 

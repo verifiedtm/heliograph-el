@@ -9,6 +9,10 @@
 (require 'svg nil t)
 
 (defgroup heliograph nil "Heliographic observatory console." :group 'applications)
+(defcustom heliograph-title "HELIOGRAPH v0.01"
+  "Title displayed in the dashboard header."
+  :type 'string :group 'heliograph)
+
 (defcustom heliograph-station (system-name) "Station callsign." :type 'string)
 (defcustom heliograph-latitude 40.7128 "Observer latitude in degrees north." :type 'number)
 (defcustom heliograph-longitude -74.006 "Observer longitude in degrees east." :type 'number)
@@ -802,7 +806,7 @@ A failed element never changes the capabilities of its siblings."
                  (heliograph--label right nil t) width)))
         (rule (list (heliograph--rule width))))
     (cons
-     (append (funcall pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY" "SYS / 077" t)
+     (append (funcall pair heliograph-title "SYS / 077" t)
              (list rule)
              (funcall pair (format "STATION %s" (heliograph--station-label))
                       (plist-get snapshot :date)))

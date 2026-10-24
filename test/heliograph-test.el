@@ -20,7 +20,7 @@
     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _) nil)))
       (heliograph--render))
     (goto-char (point-min))
-    (should (search-forward "HELIOGRAPHIC COMPUTING AUTHORITY" nil t))
+    (should (search-forward "HELIOGRAPH v0.01" nil t))
     (should (search-forward "SOLAR ALTITUDE" nil t))
     (should (search-forward "● READY" nil t))))
 
@@ -194,7 +194,7 @@
                 ((symbol-function 'window-body-height) (lambda (&rest _) (cadr geometry))))
         (heliograph--render)
         (goto-char (point-min))
-        (should (looking-at "☼ HELIOGRAPHIC"))
+        (should (looking-at "HELIOGRAPH v0.01"))
         (when (>= (car geometry) 80)
           (search-forward "SYS / 077")
           (should (= (current-column) (car geometry))))
