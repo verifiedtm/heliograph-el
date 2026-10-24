@@ -2,6 +2,14 @@
 
 a fictional 1970s heliographic computing authority, implemented as a native emacs dashboard. graphical emacs draws an astronomical svg dial; terminal emacs uses the same layout with native text and a living astronomical inscription. no browser, external process, or third-party elisp dependency.
 
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/heliograph_svg.png" alt="Heliograph SVG view" width="100%"></td>
+    <td width="50%" valign="top"><img src="docs/heliograph_text.png" alt="Heliograph text view" width="100%"></td>
+  </tr>
+</table>
+
+
 ## quick start
 
 put `heliograph.el` somewhere on your emacs load path, then:
