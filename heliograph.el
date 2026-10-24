@@ -27,11 +27,11 @@
 NOAA fractional-year approximation.  Not intended for navigation."
   (let* ((date (decode-time (or time (current-time)) 0))
          (day (time-to-days (encode-time 0 0 12
-                                        (decoded-time-day date)
-                                        (decoded-time-month date)
-                                        (decoded-time-year date) 0)))
-         (jan1 (time-to-days (encode-time 0 0 12 1 1
+                                         (decoded-time-day date)
+                                         (decoded-time-month date)
                                          (decoded-time-year date) 0)))
+         (jan1 (time-to-days (encode-time 0 0 12 1 1
+                                          (decoded-time-year date) 0)))
          (n (1+ (- day jan1)))
          (minutes (+ (* 60 (decoded-time-hour date))
                      (decoded-time-minute date)
@@ -39,9 +39,9 @@ NOAA fractional-year approximation.  Not intended for navigation."
          (gamma (* (/ (* 2.0 float-pi) 365.0)
                    (+ (1- n) (/ (- minutes 720) 1440.0))))
          (eqtime (* 229.18 (+ 0.000075 (* 0.001868 (cos gamma))
-                             (* -0.032077 (sin gamma))
-                             (* -0.014615 (cos (* 2 gamma)))
-                             (* -0.040849 (sin (* 2 gamma))))))
+                              (* -0.032077 (sin gamma))
+                              (* -0.014615 (cos (* 2 gamma)))
+                              (* -0.040849 (sin (* 2 gamma))))))
          (decl (+ 0.006918 (* -0.399912 (cos gamma))
                   (* 0.070257 (sin gamma))
                   (* -0.006758 (cos (* 2 gamma)))
@@ -51,11 +51,11 @@ NOAA fractional-year approximation.  Not intended for navigation."
          (ha (* (/ float-pi 180.0)
                 (/ (- (mod (+ minutes eqtime
                               (* 4.0 heliograph-longitude)) 1440.0)
-                       720.0) 4.0)))
+                      720.0) 4.0)))
          (lat (* (/ float-pi 180.0) heliograph-latitude))
          (alt (asin (max -1.0 (min 1.0
-                                (+ (* (sin lat) (sin decl))
-                                   (* (cos lat) (cos decl) (cos ha)))))))
+                                   (+ (* (sin lat) (sin decl))
+                                      (* (cos lat) (cos decl) (cos ha)))))))
          (az (atan (sin ha)
                    (- (* (cos ha) (sin lat))
                       (* (tan decl) (cos lat))))))
@@ -215,7 +215,7 @@ Simple synodic cycle, NOT a precision ephemeris."
                (when (buffer-live-p buffer)
                  (with-current-buffer buffer
                    (when (get-buffer-window buffer t)
-                     (heliograph--render)))))))))
+                     (heliograph--render))))))))))
 
 ;;;###autoload
 (defun heliograph-refresh ()
