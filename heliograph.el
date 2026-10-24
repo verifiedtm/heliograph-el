@@ -82,47 +82,87 @@ Simple synodic cycle, NOT a precision ephemeris."
           :julian (+ 2440587.5 (/ (float-time) 86400.0)))))
 
 (defun heliograph--dial (snapshot)
-  "Build graphical SVG dial for SNAPSHOT, or nil in terminal frames."
-  (when (and (display-graphic-p) (image-type-available-p 'svg)
+  "Return a graphical solar instrument for SNAPSHOT, or nil in a tty.
+Azimuth is clockwise from north.  Altitude is shown as radial distance:
+zenith at the center and the horizon on the outer solid circle."
+  (when (and (display-graphic-p)
+             (image-type-available-p 'svg)
              (fboundp 'svg-create))
-    (let* ((s (svg-create 640 336))
-           (cx 320.0) (cy 168.0)
-           (gold "#bc985d") (dim "#655d49") (pale "#f0ce8a")
-           (az (* (/ float-pi 180.0) (plist-get snapshot :az)))
-           ;; Zenith at center; horizon at r=125.  Below horizon uses r>125.
-           (r (* 125.0 (/ (- 90.0 (plist-get snapshot :alt)) 90.0)))
-           (px (+ cx (* r (sin az))))
-           (py (- cy (* r (cos az)))))
-      (dolist (radius '(45 85 125))
-        (svg-circle s cx cy radius :fill "none"
-                    :stroke gold :stroke-width 1))
-      (svg-circle s cx cy 145 :fill "none" :stroke dim
-                  :stroke-dasharray "3,5" :stroke-width 1)
+    (let* ((width 640)
+           (height 420)
+           (cx 320.0)
+           (cy 210.0)
+           (horizon 140.0)
+           (gold "#cda769")
+           (bright "#efd194")
+           (dim "#6e664f")
+           (accent "#86b7aa")
+           (s (svg-create width height))
+           (alt (plist-get snapshot :alt))
+           (az (plist-get snapshot :az))
+           (theta (* float-pi (/ az 180.0)))
+           (r (* horizon (/ (- 90.0 alt) 90.0)))
+           (sx (+ cx (* r (sin theta))))
+           (sy (- cy (* r (cos theta)))))
+      ;; Engraved plate and concentric altitude rings.
+      (svg-circle s cx cy 170 :stroke dim :stroke-width 1 :fill "none")
+      (dolist (radius '(46.67 93.33 140))
+        (svg-circle s cx cy radius :stroke gold :stroke-width 1
+                    :fill "none"))
+      (svg-circle s cx cy 153 :stroke dim :stroke-width 1
+                  :stroke-dasharray "2,5" :fill "none")
+      ;; Cardinal axes, diagonal guides, and graduated azimuth scale.
+      (svg-line s (- cx 170) cy (+ cx 170) cy
+                :stroke dim :stroke-width 1)
+      (svg-line s cx (- cy 170) cx (+ cy 170)
+                :stroke dim :stroke-width 1)
+      (dolist (degrees '(45 135 225 315))
+        (let* ((a (* float-pi (/ degrees 180.0)))
+               (dx (* 139 (sin a)))
+               (dy (* 139 (cos a))))
+          (svg-line s (- cx dx) (+ cy dy) (+ cx dx) (- cy dy)
+                    :stroke dim :stroke-width 0.7
+                    :stroke-dasharray "2,5")))
       (dotimes (i 72)
-        (let* ((theta (* (/ (* 2.0 float-pi) 72.0) i))
-               (inner (if (zerop (mod i 6)) 134 141)))
-          (svg-line s (+ cx (* inner (sin theta)))
-                    (- cy (* inner (cos theta)))
-                    (+ cx (* 150 (sin theta)))
-                    (- cy (* 150 (cos theta)))
-                    :stroke gold :stroke-width (if (zerop (mod i 6)) 2 1))))
-      (svg-line s 154 cy 486 cy :stroke dim :stroke-width 1)
-      (svg-line s cx 6 cx 330 :stroke dim :stroke-width 1)
-      (svg-circle s cx cy 13 :fill "#84592b" :stroke pale :stroke-width 2)
-      (svg-circle s cx cy 5 :fill pale)
-      (when (<= r 150)
-        (svg-line s cx cy px py :stroke pale :stroke-width 2)
-        (svg-circle s px py 7 :fill pale))
-      (dolist (mark '(("N" 320 11) ("E" 490 172)
-                      ("S" 320 333) ("W" 150 172)))
-        (svg-text s (car mark) :x (nth 1 mark) :y (nth 2 mark)
-                  :font-size 12 :font-family "monospace"
-                  :text-anchor "middle" :fill pale))
-      (svg-text s "HCA / ARRAY 01" :x 8 :y 20 :font-size 12
-                :font-family "monospace" :fill gold)
-      (svg-text s "ZENITHAL PROJECTION" :x 632 :y 20
-                :font-size 12 :font-family "monospace"
+        (let* ((a (* i (/ (* 2.0 float-pi) 72.0)))
+               (major (zerop (mod i 6)))
+               (inner (if major 157 163)))
+          (svg-line s (+ cx (* inner (sin a)))
+                    (- cy (* inner (cos a)))
+                    (+ cx (* 170 (sin a)))
+                    (- cy (* 170 (cos a)))
+                    :stroke gold :stroke-width (if major 1.7 0.8))))
+      ;; A restrained, typeset astronomical plate.
+      (svg-text s "HCA / ARRAY 01" :x 22 :y 29
+                :font-size 13 :font-family "monospace" :fill gold)
+      (svg-text s "ZENITHAL SOLAR PROJECTION" :x 618 :y 29
+                :font-size 13 :font-family "monospace"
                 :text-anchor "end" :fill gold)
+      (dolist (mark '(("N" 320 24) ("E" 512 215)
+                      ("S" 320 403) ("W" 128 215)))
+        (svg-text s (car mark) :x (nth 1 mark) :y (nth 2 mark)
+                  :font-size 14 :font-family "monospace"
+                  :font-weight "bold" :text-anchor "middle" :fill bright))
+      (svg-text s "60" :x (+ cx 8) :y (- cy 46.67)
+                :font-size 10 :font-family "monospace" :fill dim)
+      (svg-text s "30" :x (+ cx 8) :y (- cy 93.33)
+                :font-size 10 :font-family "monospace" :fill dim)
+      (svg-text s "HORIZON" :x (+ cx 11) :y (- cy horizon)
+                :font-size 10 :font-family "monospace" :fill dim)
+      ;; Current sun: do not falsely place a below-horizon sun on the rim.
+      (when (>= alt 0.0)
+        (svg-line s cx cy sx sy :stroke accent :stroke-width 2.2)
+        (svg-circle s sx sy 13 :stroke gold :stroke-width 1
+                    :fill "none" :stroke-opacity 0.65)
+        (svg-circle s sx sy 7 :fill bright :stroke accent
+                    :stroke-width 1.5))
+      (svg-circle s cx cy 12 :fill "#7f5b2c"
+                  :stroke bright :stroke-width 2)
+      (svg-circle s cx cy 4 :fill bright)
+      (when (< alt 0.0)
+        (svg-text s "SOL BELOW HORIZON" :x cx :y 385
+                  :font-size 11 :font-family "monospace"
+                  :text-anchor "middle" :fill accent))
       (svg-image s :ascent 'center))))
 
 (defun heliograph--line (s &optional face)
