@@ -108,3 +108,45 @@ coordinates, or provider errors fall back to manual coordinates:
 A GeoClue2 D-Bus adapter is a future integration; the package does **not** yet
 contact GeoClue or locate the user automatically. The provider must not block
 startup waiting for a location fix.
+
+## geoclue2 on linux
+
+GeoClue is optional and opt-in. Install the service, e.g. on Debian:
+
+```sh
+sudo apt install geoclue-2.0
+```
+
+In Doom `config.el`:
+
+```elisp
+(after! heliograph
+  (setq heliograph-latitude 40.7128
+        heliograph-longitude -74.006
+        heliograph-geoclue-desktop-id "emacs"
+        heliograph-location-provider 'geoclue))
+```
+
+Use `M-x heliograph-geoclue-start` to request a fix or
+`M-x heliograph-geoclue-stop` to end updates. Normally startup triggers
+the request automatically when the geoclue provider is selected.
+
+The adapter uses asynchronous system-bus D-Bus calls and requests
+**city-level accuracy**. GeoClue requires authorization for the configured
+desktop ID, which must match an acceptable application desktop identity;
+availability depends on the desktop session and its location agent.
+If no fix arrives, manual coordinates remain in use. No coordinates are
+saved to disk by heliograph.
+
+To inspect a fix:
+
+```elisp
+heliograph--geoclue-fix
+```
+
+Do not add broad system-wide location permissions just to make the
+dashboard work. If the desktop agent denies access, inspect the GeoClue
+journal and authorization policy first.
+
+The D-Bus integration has not yet been tested against a live GeoClue
+daemon in CI; the unit tests run without a location service.
