@@ -12,6 +12,48 @@
 (defcustom heliograph-station (system-name) "Station callsign." :type 'string)
 (defcustom heliograph-latitude 40.7128 "Observer latitude in degrees north." :type 'number)
 (defcustom heliograph-longitude -74.006 "Observer longitude in degrees east." :type 'number)
+(defun heliograph-default-station-formatter (station)
+  "Return STATION in uppercase for display."
+  (upcase station))
+
+(defcustom heliograph-station-formatter #'heliograph-default-station-formatter
+  "Function taking the configured station name and returning display text."
+  :type 'function :group 'heliograph)
+
+(defun heliograph--station-label ()
+  "Return the configured, formatted station label."
+  (let ((name (funcall heliograph-station-formatter heliograph-station)))
+    (unless (stringp name)
+      (error "Heliograph station formatter must return a string"))
+    name))
+
+(defcustom heliograph-location-provider 'manual
+  "Source of observer coordinates.
+Use manual, or supply a function of no arguments returning a cons
+cell (LATITUDE . LONGITUDE).  Nil or errors fall back to the configured
+manual coordinates.  Providers are called synchronously; network or
+D-Bus queries should instead maintain a cached fix and return promptly."
+  :type '(choice (const :tag "Manual" manual)
+                 (function :tag "Cached location provider"))
+  :group 'heliograph)
+
+(defun heliograph--location ()
+  "Return validated observer coordinates with manual fallback."
+  (let* ((fallback (cons heliograph-latitude heliograph-longitude))
+         (candidate
+          (if (eq heliograph-location-provider 'manual)
+              fallback
+            (condition-case nil
+                (funcall heliograph-location-provider)
+              (error nil)))))
+    (if (and (consp candidate)
+             (numberp (car candidate))
+             (numberp (cdr candidate))
+             (<= -90 (car candidate) 90)
+             (<= -180 (cdr candidate) 180))
+        candidate
+      fallback)))
+
 (defcustom heliograph-refresh-seconds 60 "Seconds between visible updates; zero disables." :type 'integer)
 
 (defface heliograph-gold '((t :foreground "#cda769")) "Solar ornament.")
@@ -27,7 +69,10 @@
 (defun heliograph--solar-position (&optional time)
   "Approximate (ALTITUDE AZIMUTH) in degrees at TIME.
 NOAA fractional-year approximation.  Not intended for navigation."
-  (let* ((date (decode-time (or time (current-time)) 0))
+  (let* ((location (heliograph--location))
+         (heliograph-latitude (car location))
+         (heliograph-longitude (cdr location))
+         (date (decode-time (or time (current-time)) 0))
          (day (time-to-days (encode-time 0 0 12
                                          (decoded-time-day date)
                                          (decoded-time-month date)
@@ -227,7 +272,7 @@ Called with SNAPSHOT and a context plist.  Must return a
       (heliograph--line (make-string width ?═) 'heliograph-gold)
       (heliograph--line "  ☼ HELIOGRAPHIC COMPUTING AUTHORITY" 'heliograph-heading)
       (heliograph--line (format "  STATION %-18s %s"
-                                heliograph-station (plist-get snapshot :date))
+                                (heliograph--station-label) (plist-get snapshot :date))
                         'heliograph-muted)
       (heliograph--line (make-string width ?─) 'heliograph-gold)
       (if dial
@@ -331,7 +376,7 @@ enough; smaller windows scroll naturally instead of overlapping."
     (heliograph--gui-pair "☼ HELIOGRAPHIC COMPUTING AUTHORITY"
                           "SYS / 077" t)
     (heliograph--gui-rule)
-    (heliograph--gui-pair (format "STATION %s" heliograph-station)
+    (heliograph--gui-pair (format "STATION %s" (heliograph--station-label))
                           (plist-get snapshot :date))
     (heliograph--gui-gap before)
     (when (>= (window-body-width nil t) center-width)
