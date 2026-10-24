@@ -14,7 +14,7 @@ put `heliograph.el` somewhere on your emacs load path, then:
       heliograph-longitude -74.006)
 ```
 
-evaluate `M-x heliograph` to open the standalone console.
+evaluate `M-x heliograph` to open the standalone console.\n\nselect a renderer explicitly with `M-x heliograph-svg` or `M-x heliograph-text`. the text command works even in a graphical frame, while svg requires svg support. each opens its own buffer; refreshes keep its selected renderer.
 
 ## doom dashboard integration
 
