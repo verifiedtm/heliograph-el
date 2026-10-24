@@ -137,9 +137,9 @@ zenith at the center and the horizon on the outer solid circle."
       ;; A restrained, typeset astronomical plate.
       (svg-text s "HCA / ARRAY 01" :x 22 :y 29
                 :font-size 13 :font-family "monospace" :fill gold)
-      (svg-text s "ZENITHAL SOLAR PROJECTION" :x 618 :y 29
+      (svg-text s "ZENITHAL SOLAR PROJECTION" :x 320 :y 54
                 :font-size 13 :font-family "monospace"
-                :text-anchor "end" :fill gold)
+                :text-anchor "middle" :fill gold)
       (dolist (mark '(("N" 320 24) ("E" 512 215)
                       ("S" 320 403) ("W" 128 215)))
         (svg-text s (car mark) :x (nth 1 mark) :y (nth 2 mark)
@@ -162,7 +162,7 @@ zenith at the center and the horizon on the outer solid circle."
                   :stroke bright :stroke-width 2)
       (svg-circle s cx cy 4 :fill bright)
       (when (< alt 0.0)
-        (svg-text s "SOL BELOW HORIZON" :x cx :y 385
+        (svg-text s "SOL BELOW HORIZON" :x cx :y 414
                   :font-size 11 :font-family "monospace"
                   :text-anchor "middle" :fill accent))
       (svg-image s :ascent 'center))))
