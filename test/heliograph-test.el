@@ -24,5 +24,21 @@
     (should (search-forward "SOLAR ALTITUDE" nil t))
     (should (search-forward "INSTRUMENTATION READY" nil t))))
 
+
+(ert-deftest heliograph-station-formatting ()
+  (let ((heliograph-station "hyperion")
+        (heliograph-station-formatter #'heliograph-default-station-formatter))
+    (should (equal (heliograph--station-label) "HYPERION"))))
+
+(ert-deftest heliograph-location-fallback ()
+  (let ((heliograph-latitude 40.0)
+        (heliograph-longitude -73.0)
+        (heliograph-location-provider (lambda () nil)))
+    (should (equal (heliograph--location) '(40.0 . -73.0)))))
+
+(ert-deftest heliograph-location-provider-coordinates ()
+  (let ((heliograph-location-provider (lambda () '(51.5 . -0.1))))
+    (should (equal (heliograph--location) '(51.5 . -0.1)))))
+
 (provide 'heliograph-test)
 ;;; heliograph-test.el ends here
